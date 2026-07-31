@@ -18,10 +18,15 @@
 <meta property="og:description" content="Rock, drinks e petiscos em frente à Praça Central de Brumadinho. Quarta a domingo a partir das 17h.">
 <meta property="og:image" content="assets/logo_glow.png">
 <meta property="og:type" content="website">
+<meta property="og:url" content="https://kombozabar-1aa4a.web.app/">
+<link rel="canonical" href="https://kombozabar-1aa4a.web.app/">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%230a0a0a'/><text x='50' y='68' font-size='60' text-anchor='middle' fill='%238B0000' font-family='Arial Black,sans-serif' font-weight='900'>K</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Oswald:wght@500;600;700&family=Barlow+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- DADOS ESTRUTURADOS — confirmar domínio real se houver domínio próprio configurado no Firebase Hosting -->
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BarOrPub","name":"Komboza Bar","image":"https://kombozabar-1aa4a.web.app/assets/logo_glow.png","url":"https://kombozabar-1aa4a.web.app/","telephone":"+5531998864613","priceRange":"$$","address":{"@type":"PostalAddress","streetAddress":"Rua José da Silva Fernandes, 24 - Lourdes","addressLocality":"Brumadinho","addressRegion":"MG","addressCountry":"BR"},"openingHoursSpecification":[{"@type":"OpeningHoursSpecification","dayOfWeek":["Wednesday","Thursday"],"opens":"17:00","closes":"00:00"},{"@type":"OpeningHoursSpecification","dayOfWeek":["Friday","Saturday"],"opens":"17:00","closes":"02:00"},{"@type":"OpeningHoursSpecification","dayOfWeek":"Sunday","opens":"17:00","closes":"00:00"}],"aggregateRating":{"@type":"AggregateRating","ratingValue":"5.0","reviewCount":"15"},"sameAs":["https://instagram.com/komboza.bar"]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Precisa reservar mesa?","acceptedAnswer":{"@type":"Answer","text":"Não é obrigatório, mas em noite de show especial vale reservar pelo WhatsApp pra garantir lugar."}},{"@type":"Question","name":"Tem estacionamento?","acceptedAnswer":{"@type":"Answer","text":"Não temos estacionamento próprio. A região da Praça Central tem vaga de rua."}},{"@type":"Question","name":"Quais formas de pagamento vocês aceitam?","acceptedAnswer":{"@type":"Answer","text":"Cartão, Pix, dinheiro e cartão CDL Brumadinho (vale-alimentação da prefeitura)."}},{"@type":"Question","name":"Pode levar criança ou pet?","acceptedAnswer":{"@type":"Answer","text":"Sim, o ambiente é aberto pra todo mundo, sem restrição formal."}},{"@type":"Question","name":"Tem música ao vivo toda semana?","acceptedAnswer":{"@type":"Answer","text":"Sim. A programação muda toda semana, confira a seção de programação da página."}},{"@type":"Question","name":"Qual o melhor dia pra ir?","acceptedAnswer":{"@type":"Answer","text":"Quarta é a Quarta Pesada, com promoção fixa. Quinta tem Komboza Ao Vivo. Sexta costuma ter show especial. Sábado e domingo o bar abre normal."}}]}</script>
 <style>
 
 /* ===================== QUARTA PESADA + SHOW ESPECIAL ===================== */
@@ -40,7 +45,8 @@
 /* ===================== SEÇÃO SHOW ESPECIAL (reaproveitar quando houver próximo show grande) ===================== */
 .show-hero{
   position:relative;
-  background:#0a0a0a;
+  background-color:#0a0a0a;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.07'/%3E%3C/svg%3E");
   overflow:hidden;
   padding:0;
 }
@@ -117,16 +123,28 @@
   25%{text-shadow:2px 0 var(--blood-hi),-2px 0 #f5a623}
   75%{text-shadow:-2px 0 var(--blood-hi),2px 0 #f5a623}
 }
+@keyframes titleShake{
+  0%,100%{text-shadow:none}
+  25%{transform:translateX(-2px) rotate(-.4deg);text-shadow:3px 2px 0 rgba(168,16,16,.9),0 0 30px rgba(168,16,16,.6)}
+  75%{transform:translateX(2px) rotate(.4deg);text-shadow:-3px 2px 0 rgba(168,16,16,.9),0 0 30px rgba(168,16,16,.6)}
+}
+.show-title.shake-loop{animation:titleShake .35s ease-in-out}
 
 @media(min-width:760px){
   .show-hero-inner{
-    flex-direction:row;align-items:flex-end;
+    display:grid;
+    grid-template-columns:300px 1fr;
+    align-items:center;
     justify-content:center;gap:48px;text-align:left;
     padding:60px 24px 0;
   }
-  .show-artist{width:340px;min-width:340px;align-self:flex-end}
-  .show-content{padding:48px 0 60px;flex:1;max-width:500px}
+  .show-artist{width:100%;height:auto;justify-self:end}
+  .show-content{padding:48px 0 60px;max-width:500px}
   .show-cta-wrap{margin-left:0}
+}
+
+@media(min-width:1100px){
+  .show-hero-inner{grid-template-columns:360px 1fr}
 }
 
 /* ===================== TOKENS ===================== */
@@ -215,6 +233,12 @@ a{color:inherit;text-decoration:none}
 .promo-price{font-family:'Anton';font-size:1.4rem;white-space:nowrap}
 .prog-note{text-align:center;color:var(--cream-dim);font-size:.85rem;margin-top:18px;letter-spacing:.5px}
 
+/* ===================== SOBRE ===================== */
+.about{background:var(--black)}
+.about-inner{max-width:640px;margin:0 auto;text-align:center}
+.about-inner p{font-size:1.05rem;line-height:1.6;color:var(--cream-dim)}
+.about-inner strong{color:var(--cream);font-weight:600}
+
 /* ===================== INFO / HORÁRIOS ===================== */
 .info-grid{display:flex;flex-direction:column;gap:22px}
 .info-card{background:var(--black-2);border:1px solid var(--line);border-radius:10px;padding:22px}
@@ -248,6 +272,17 @@ a{color:inherit;text-decoration:none}
 .review-name{font-family:'Oswald';font-weight:600;text-transform:uppercase;letter-spacing:.5px;font-size:.88rem}
 .review-source{font-size:.75rem;color:var(--cream-dim);letter-spacing:.5px}
 
+/* ===================== FAQ ===================== */
+.faq{background:var(--black-2)}
+.faq-list{display:flex;flex-direction:column;gap:10px;max-width:680px;margin:0 auto}
+.faq-item{background:var(--black-3);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.faq-item summary{list-style:none;cursor:pointer;padding:16px 20px;font-family:'Oswald';font-weight:600;text-transform:none;letter-spacing:.3px;font-size:1rem;display:flex;justify-content:space-between;align-items:center;gap:14px}
+.faq-item summary::-webkit-details-marker{display:none}
+.faq-item summary .chev{flex-shrink:0;width:18px;height:18px;color:var(--blood-hi);transition:transform .25s ease}
+.faq-item[open] summary .chev{transform:rotate(180deg)}
+.faq-item[open] summary{color:var(--blood-hi)}
+.faq-item p{padding:0 20px 18px;color:var(--cream-dim);font-size:.95rem;line-height:1.55}
+
 /* ===================== CTA FINAL ===================== */
 .final{text-align:center;background:radial-gradient(120% 90% at 50% 0%,#1a1010 0%,var(--black) 65%);padding:80px 24px 110px}
 .final h2{font-size:clamp(1.9rem,6vw,2.6rem);margin-bottom:12px}
@@ -256,7 +291,7 @@ a{color:inherit;text-decoration:none}
 
 /* ===================== RODAPÉ ===================== */
 footer{background:var(--black);border-top:1px solid var(--line);padding:30px 22px 110px;text-align:center}
-.footer-links{display:flex;justify-content:center;gap:24px;margin-bottom:6px}
+.footer-links{display:flex;justify-content:center;flex-wrap:wrap;gap:14px 24px;margin-bottom:6px}
 footer .ig{display:inline-flex;align-items:center;gap:8px;font-family:'Oswald';text-transform:uppercase;letter-spacing:1px;font-size:.9rem;color:var(--cream-dim)}
 footer .ig:hover{color:var(--cream)}
 footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;letter-spacing:.5px}
@@ -415,6 +450,20 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
   </div>
 </section>
 
+<!-- ============ SOBRE ============ -->
+<section class="section about" id="sobre">
+  <div class="wrap">
+    <div class="head reveal">
+      <p class="eyebrow">Quem somos</p>
+      <h2 class="display">Container, Kombi e rock ao vivo</h2>
+      <div class="divider"></div>
+    </div>
+    <div class="about-inner reveal">
+      <p>O Komboza nasceu num container em frente à Praça Central de Brumadinho e virou o point de rock da cidade: música ao vivo, drink autoral e petisco bom até fechar. A <strong>Kombi vermelha</strong> estacionada na porta é a nossa marca registrada, se ela tá lá, o Komboza tá aberto.</p>
+    </div>
+  </div>
+</section>
+
 <!-- ============ LOCALIZAÇÃO E HORÁRIOS ============ -->
 <section class="section" id="onde">
   <div class="wrap">
@@ -512,6 +561,43 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
   </div>
 </section>
 
+<!-- ============ FAQ ============ -->
+<section class="section faq" id="faq">
+  <div class="wrap">
+    <div class="head reveal">
+      <p class="eyebrow">Antes de perguntar no zap</p>
+      <h2 class="display">Perguntas frequentes</h2>
+      <div class="divider"></div>
+    </div>
+    <div class="faq-list reveal">
+      <details class="faq-item">
+        <summary>Precisa reservar mesa?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <p>Não é obrigatório, mas em noite de show especial vale reservar pelo WhatsApp pra garantir lugar.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Tem estacionamento?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <p>Não temos estacionamento próprio. A região da Praça Central tem vaga de rua.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Quais formas de pagamento vocês aceitam?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <p>Cartão, Pix, dinheiro e cartão CDL Brumadinho (vale-alimentação da prefeitura).</p>
+      </details>
+      <details class="faq-item">
+        <summary>Pode levar criança ou pet?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <p>Sim, o ambiente é aberto pra todo mundo, sem restrição formal.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Tem música ao vivo toda semana?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <p>Sim. A programação muda toda semana, confira a seção de programação da página.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Qual o melhor dia pra ir?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
+        <p>Quarta é a Quarta Pesada, com promoção fixa. Quinta tem Komboza Ao Vivo. Sexta costuma ter show especial. Sábado e domingo o bar abre normal.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
 <!-- ============ CTA FINAL ============ -->
 <section class="final" id="contato">
   <div class="reveal">
@@ -534,6 +620,10 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.16c3.2 0 3.58.01 4.85.07 1.17.05 1.8.25 2.23.41.56.22.96.48 1.38.9.42.42.68.82.9 1.38.16.42.36 1.06.41 2.23.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.05 1.17-.25 1.8-.41 2.23-.22.56-.48.96-.9 1.38-.42.42-.82.68-1.38.9-.42.16-1.06.36-2.23.41-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-1.17-.05-1.8-.25-2.23-.41a3.7 3.7 0 01-1.38-.9 3.7 3.7 0 01-.9-1.38c-.16-.42-.36-1.06-.41-2.23C2.17 15.58 2.16 15.2 2.16 12s.01-3.58.07-4.85c.05-1.17.25-1.8.41-2.23.22-.56.48-.96.9-1.38.42-.42.82-.68 1.38-.9.42-.16 1.06-.36 2.23-.41C8.42 2.17 8.8 2.16 12 2.16zm0 3.24A6.6 6.6 0 1018.6 12 6.6 6.6 0 0012 5.4zm0 10.89A4.29 4.29 0 1116.29 12 4.29 4.29 0 0112 16.29zm6.85-11.15a1.54 1.54 0 11-1.54-1.54 1.54 1.54 0 011.54 1.54z"/></svg>
       @komboza.bar
     </a>
+    <a class="ig" href="https://www.google.com/maps/search/?api=1&query=Rua+Jos%C3%A9+da+Silva+Fernandes+24+Brumadinho+MG" target="_blank" rel="noopener">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 3"/></svg>
+      Avaliações no Google
+    </a>
   </div>
   <p class="copy">© Komboza Bar · Brumadinho/MG</p>
 </footer>
@@ -553,13 +643,28 @@ document.querySelectorAll('.reveal').forEach(function(el){io.observe(el)});
 
 var showHero=document.querySelector('.show-hero');
 if(showHero){
+  var showTitle=showHero.querySelector('.show-title');
+  var shakeTimer=null;
+  function triggerShake(){
+    if(!showTitle)return;
+    showTitle.classList.remove('shake-loop');
+    void showTitle.offsetWidth;
+    showTitle.classList.add('shake-loop');
+    setTimeout(function(){showTitle.classList.remove('shake-loop');},380);
+  }
   var showIO=new IntersectionObserver(function(es){es.forEach(function(e){
     if(e.isIntersecting){
       showHero.classList.remove('play');
       void showHero.offsetWidth;
       showHero.classList.add('play');
+      clearInterval(shakeTimer);
+      shakeTimer=setTimeout(function(){
+        triggerShake();
+        shakeTimer=setInterval(triggerShake,4000);
+      },1200);
     }else{
       showHero.classList.remove('play');
+      clearInterval(shakeTimer);
     }
   });},{threshold:.2});
   showIO.observe(showHero);
