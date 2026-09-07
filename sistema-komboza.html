@@ -305,6 +305,9 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
       <button class="nitem" data-tela="previsao"><span class="ni">🔮</span>Previsão de caixa</button>
       <button class="nitem" data-tela="categorias"><span class="ni">🏷</span>Categorias</button>
       <button class="nitem" data-tela="importar"><span class="ni">📁</span>Importar</button>
+      <div class="nlbl">Análise</div>
+      <button class="nitem" data-tela="analises"><span class="ni">📈</span>Análises</button>
+      <button class="nitem" data-tela="exportar"><span class="ni">⬇</span>Exportar</button>
       <div class="nlbl">Agenda</div>
       <button class="nitem" data-tela="calendario"><span class="ni">📅</span>Calendário</button>
       <button class="nitem" data-tela="shows"><span class="ni">🎸</span>Shows</button>
@@ -945,7 +948,8 @@ function voltarLoginUI(msg){
 const TELAS={
   painel:renderPainel,receber:()=>renderLista('receber'),pagar:()=>renderLista('pagar'),
   fixas:renderFixas,previsao:renderPrevisao,categorias:renderCategorias,
-  importar:renderImportar,calendario:renderAgenda,shows:renderShows
+  importar:renderImportar,analises:renderAnalises,exportar:renderExportar,
+  calendario:renderAgenda,shows:renderShows
 };
 
 function navTo(tela,silencioso){
@@ -2363,6 +2367,389 @@ function previaStone(texto){
     const res=gravarStone(linhasStone);
     toast(`${res.vendas} venda(s) importadas.`+(res.estimado.criados?` Dinheiro estimado em ${res.dias} dia(s).`:''));
     navTo('painel');
+  });
+}
+
+// ═══════════════════════════════════════════════
+// ANÁLISES
+// ═══════════════════════════════════════════════
+// Base: só venda real do bar. Ficam de fora o dinheiro estimado (premissa, não
+// medição), o uso pessoal (passa pelo CNPJ mas não é venda) e as falhas (nem
+// viraram lançamento). Misturar qualquer um deles distorce ticket médio.
+const horaDoLanc=l=>l.dataVenda?parseInt(l.dataVenda.slice(11,13)):null;
+
+function semanaAtual(){
+  const h=hojeISO(),[y,m,d]=h.split('-').map(Number);
+  const dt=new Date(y,m-1,d);
+  const seg=new Date(dt);seg.setDate(dt.getDate()-((dt.getDay()+6)%7)); // segunda
+  const dom=new Date(seg);dom.setDate(seg.getDate()+6);
+  const f=x=>`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+  return{de:f(seg),ate:f(dom)};
+}
+
+function filtrosAnalise(){
+  if(!APP.analise)APP.analise={...semanaAtual(),forma:'',bandeira:'',h0:'',h1:''};
+  return APP.analise;
+}
+
+function baseAnalise(){
+  const f=filtrosAnalise();
+  return getLanc().filter(l=>{
+    if(l.origem!=='Stone'||l.foraDaAnalise||l.tipo!=='receber')return false;
+    if(!l.diaOperacional||l.diaOperacional<f.de||l.diaOperacional>f.ate)return false;
+    if(f.forma&&l.forma!==f.forma)return false;
+    if(f.bandeira&&(l.bandeira||'')!==f.bandeira)return false;
+    if(f.h0!==''||f.h1!==''){
+      const h=horaDoLanc(l);
+      if(h===null)return false;
+      if(f.h0!==''&&h<parseInt(f.h0))return false;
+      if(f.h1!==''&&h>parseInt(f.h1))return false;
+    }
+    return true;
+  });
+}
+
+// Barras horizontais reaproveitando o estilo do painel
+function barras(itens,corPadrao){
+  const max=Math.max(...itens.map(i=>i.valor),1);
+  return itens.map(i=>`
+    <div class="fp-row">
+      <div class="fp-top">
+        <span class="fp-nome">${esc(i.rotulo)}</span>
+        <span><span class="fp-val">${esc(i.texto||fBRL(i.valor))}</span>${i.extra?`<span class="fp-pct">${esc(i.extra)}</span>`:''}</span>
+      </div>
+      <div class="fp-track"><div class="fp-fill" style="width:${i.valor/max*100}%;background:${i.cor||corPadrao}"></div></div>
+    </div>`).join('');
+}
+
+function renderAnalises(){
+  const f=filtrosAnalise();
+  const dados=baseAnalise();
+  const n=dados.length;
+  const bruto=dados.reduce((s,l)=>s+(l.valorBruto||0),0);
+  const liquido=dados.reduce((s,l)=>s+(l.valorLiquido||0),0);
+  const ticket=n?bruto/n:0;
+
+  // por dia operacional
+  const porDia={};dados.forEach(l=>porDia[l.diaOperacional]=(porDia[l.diaOperacional]||0)+l.valorBruto);
+  const dias=Object.keys(porDia).sort();
+  // por dia da semana
+  const DOW=['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
+  const porDow={},nDow={};
+  dias.forEach(d=>{const[y,m,dd]=d.split('-').map(Number);const w=new Date(y,m-1,dd).getDay();
+    porDow[w]=(porDow[w]||0)+porDia[d];nDow[w]=(nDow[w]||0)+1;});
+  // horário de pico
+  const porHora={};dados.forEach(l=>{const h=horaDoLanc(l);if(h!==null)porHora[h]=(porHora[h]||0)+l.valorBruto;});
+  // forma e bandeira
+  const porForma={},porBand={};
+  dados.forEach(l=>{porForma[l.forma||'—']=(porForma[l.forma||'—']||0)+l.valorBruto;
+    porBand[l.bandeira||'sem bandeira']=(porBand[l.bandeira||'sem bandeira']||0)+l.valorBruto;});
+  // faixa de valor
+  const faixas=[{r:'Até R$ 20',min:0,max:20},{r:'R$ 20 a 50',min:20,max:50},
+    {r:'R$ 50 a 100',min:50,max:100},{r:'R$ 100 a 200',min:100,max:200},{r:'Acima de R$ 200',min:200,max:1e9}];
+  const porFaixa=faixas.map(x=>({...x,qtd:dados.filter(l=>l.valorBruto>x.min&&l.valorBruto<=x.max).length}));
+  // dias com show × sem show
+  const diasShow=new Set(getShows().map(s=>s.data));
+  const comShow=dias.filter(d=>diasShow.has(d)),semShow=dias.filter(d=>!diasShow.has(d));
+  const mediaDe=arr=>arr.length?arr.reduce((s,d)=>s+porDia[d],0)/arr.length:0;
+
+  const formasUsadas=[...new Set(getLanc().filter(l=>l.origem==='Stone').map(l=>l.forma).filter(Boolean))];
+  const bandsUsadas=[...new Set(getLanc().filter(l=>l.origem==='Stone').map(l=>l.bandeira).filter(Boolean))];
+
+  $('main').innerHTML=`
+    <div class="ph">
+      <div><h1>Análises</h1><p>Só venda pelo Stone — dinheiro estimado e uso pessoal ficam de fora</p></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Período</div>
+      <div class="frow" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));align-items:end">
+        <div class="fgroup" style="margin:0"><label>De</label><input type="date" id="an-de" value="${esc(f.de)}"></div>
+        <div class="fgroup" style="margin:0"><label>Até</label><input type="date" id="an-ate" value="${esc(f.ate)}"></div>
+        <div class="fgroup" style="margin:0"><label>Hora inicial</label><input type="number" id="an-h0" min="0" max="23" placeholder="qualquer" value="${esc(f.h0)}"></div>
+        <div class="fgroup" style="margin:0"><label>Hora final</label><input type="number" id="an-h1" min="0" max="23" placeholder="qualquer" value="${esc(f.h1)}"></div>
+        <div class="fgroup" style="margin:0"><label>Forma</label>
+          <select id="an-forma"><option value="">Todas</option>${formasUsadas.map(x=>`<option ${f.forma===x?'selected':''}>${esc(x)}</option>`).join('')}</select>
+        </div>
+        <div class="fgroup" style="margin:0"><label>Bandeira</label>
+          <select id="an-band"><option value="">Todas</option>${bandsUsadas.map(x=>`<option ${f.bandeira===x?'selected':''}>${esc(x)}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div class="flex gap8" style="margin-top:12px;flex-wrap:wrap">
+        <button class="btn btn-s btn-sm" data-per="semana">Semana atual</button>
+        <button class="btn btn-s btn-sm" data-per="mes">Mês atual</button>
+        <button class="btn btn-s btn-sm" data-per="mesant">Mês passado</button>
+        <button class="btn btn-s btn-sm" data-per="tudo">Tudo</button>
+        <button class="btn btn-p btn-sm" id="an-aplicar">Aplicar</button>
+      </div>
+    </div>
+
+    ${n===0?`<div class="card"><div class="vazio">Nenhuma venda do Stone neste período.<br>Importe o extrato ou amplie o intervalo.</div></div>`:`
+    <div class="fin-kgrid">
+      <div class="kcard"><div class="kval valor-pos num">${esc(fBRL(ticket))}</div><div class="klbl">Ticket médio</div><div class="ksub">${n} transação(ões)</div></div>
+      <div class="kcard"><div class="kval num">${esc(fBRL(bruto))}</div><div class="klbl">Faturamento bruto</div><div class="ksub">${dias.length} dia(s) com venda</div></div>
+      <div class="kcard"><div class="kval valor-rec num">${esc(fBRL(liquido))}</div><div class="klbl">Líquido após taxa</div><div class="ksub">${esc(fBRL(bruto-liquido))} de MDR</div></div>
+      <div class="kcard"><div class="kval num" style="color:var(--amber)">${esc(fBRL(dias.length?bruto/dias.length:0))}</div><div class="klbl">Média por dia</div><div class="ksub">no período</div></div>
+    </div>
+
+    <div class="mgr">
+      <div class="card">
+        <div class="ctitle">Faturamento por dia operacional</div>
+        <div class="fin-bar-wrap" style="overflow-x:auto">
+          ${dias.map(d=>{const max=Math.max(...Object.values(porDia),1);const alt=Math.max(4,Math.round(porDia[d]/max*110));
+            return `<div class="fin-bar-col">
+              <div class="fin-bar-bars" style="height:110px"><div class="fin-bar" style="background:rgba(92,184,92,.6);height:${alt}px" title="${esc(fBRL(porDia[d]))}"></div></div>
+              <div class="fin-bar-lbl">${d.slice(8)}/${d.slice(5,7)}</div>
+            </div>`;}).join('')}
+        </div>
+        <div class="text-sm text-muted" style="text-align:center">Madrugada conta para a noite anterior (corte ${CORTE_OPERACIONAL}h)</div>
+      </div>
+      <div class="card">
+        <div class="ctitle">Por dia da semana</div>
+        ${barras(Object.keys(porDow).sort((a,b)=>((+a+6)%7)-((+b+6)%7)).map(w=>({
+          rotulo:DOW[w],valor:porDow[w]/nDow[w],extra:`${nDow[w]} dia(s)`,cor:'var(--ok)'
+        })),'var(--ok)')||'<div class="vazio">Sem dados.</div>'}
+        <div class="text-sm text-muted" style="margin-top:6px">Média por dia, para não premiar o dia que apareceu mais vezes.</div>
+      </div>
+    </div>
+
+    <div class="mgr">
+      <div class="card">
+        <div class="ctitle">Horário de pico</div>
+        <div class="fin-bar-wrap" style="overflow-x:auto">
+          ${Object.keys(porHora).sort((a,b)=>a-b).map(h=>{const max=Math.max(...Object.values(porHora),1);
+            return `<div class="fin-bar-col">
+              <div class="fin-bar-bars" style="height:100px"><div class="fin-bar" style="background:var(--accent);height:${Math.max(4,Math.round(porHora[h]/max*100))}px" title="${esc(fBRL(porHora[h]))}"></div></div>
+              <div class="fin-bar-lbl">${String(h).padStart(2,'0')}h</div>
+            </div>`;}).join('')||'<div class="vazio">Sem hora registrada.</div>'}
+        </div>
+      </div>
+      <div class="card">
+        <div class="ctitle">Faixa de valor da transação</div>
+        ${barras(porFaixa.map(x=>({rotulo:x.r,valor:x.qtd,texto:x.qtd+' venda(s)',
+          extra:n?Math.round(x.qtd/n*100)+'%':''})),'var(--amber)')}
+      </div>
+    </div>
+
+    <div class="mgr">
+      <div class="card">
+        <div class="ctitle">Por forma de pagamento</div>
+        ${barras(Object.entries(porForma).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({
+          rotulo:k,valor:v,extra:Math.round(v/bruto*100)+'%',cor:CORES_FORMA[k]||'var(--accent)'})),'var(--accent)')}
+      </div>
+      <div class="card">
+        <div class="ctitle">Por bandeira</div>
+        ${barras(Object.entries(porBand).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({
+          rotulo:k,valor:v,extra:Math.round(v/bruto*100)+'%'})),'#6AA0FF')}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ctitle">Noite com show × sem show</div>
+      ${comShow.length?`
+        <div class="frow c2">
+          <div class="kcard"><div class="kval valor-pos num">${esc(fBRL(mediaDe(comShow)))}</div><div class="klbl">Média com show</div><div class="ksub">${comShow.length} noite(s)</div></div>
+          <div class="kcard"><div class="kval num">${esc(fBRL(mediaDe(semShow)))}</div><div class="klbl">Média sem show</div><div class="ksub">${semShow.length} noite(s)</div></div>
+        </div>
+        ${semShow.length&&mediaDe(semShow)>0?`<div class="text-sm" style="margin-top:10px;color:var(--text-2)">
+          Noite com show fatura <strong>${Math.round((mediaDe(comShow)/mediaDe(semShow)-1)*100)}%</strong> ${mediaDe(comShow)>=mediaDe(semShow)?'a mais':'a menos'} que noite sem show, neste período.
+        </div>`:''}
+        ${comShow.length<3?`<div class="text-sm" style="margin-top:8px;color:var(--amber)">Poucas noites com show no período: o número ainda não significa muito.</div>`:''}
+      `:'<div class="vazio">Nenhum show cadastrado neste período.</div>'}
+    </div>`}`;
+
+  const aplicar=()=>{
+    const a=filtrosAnalise();
+    a.de=v('an-de')||a.de;a.ate=v('an-ate')||a.ate;
+    a.h0=v('an-h0');a.h1=v('an-h1');
+    a.forma=$('an-forma').value;a.bandeira=$('an-band').value;
+    renderAnalises();
+  };
+  $('an-aplicar').addEventListener('click',aplicar);
+  $('main').querySelectorAll('[data-per]').forEach(b=>b.addEventListener('click',()=>{
+    const a=filtrosAnalise(),hoje=hojeISO();
+    if(b.dataset.per==='semana')Object.assign(a,semanaAtual());
+    else if(b.dataset.per==='mes'){a.de=hoje.slice(0,7)+'-01';a.ate=hoje;}
+    else if(b.dataset.per==='mesant'){const m=somaMes(hoje.slice(0,7),-1);
+      const[y,mm]=m.split('-').map(Number);a.de=m+'-01';a.ate=m+'-'+String(new Date(y,mm,0).getDate()).padStart(2,'0');}
+    else{const ds=getLanc().filter(l=>l.origem==='Stone'&&l.diaOperacional).map(l=>l.diaOperacional).sort();
+      a.de=ds[0]||hoje;a.ate=ds[ds.length-1]||hoje;}
+    renderAnalises();
+  }));
+}
+
+// ═══════════════════════════════════════════════
+// EXPORTAR
+// ═══════════════════════════════════════════════
+const COLS_EXPORT=['Data Venda','Dia Operacional','Data Recebimento','Tipo','Forma','Bandeira',
+  'Descrição','Valor Bruto','Valor Líquido','Qtd Transações','Origem','Categoria','Conta','Pago','Observações'];
+
+function linhaExport(l){
+  return[l.dataVenda?l.dataVenda.replace('T',' '):'',l.diaOperacional||'',l.dataRecebimento||'',
+    l.tipo||'',l.forma||'',l.bandeira||'',l.descricao||'',
+    (l.valorBruto??l.valor??0).toFixed(2).replace('.',','),
+    (l.valorLiquido??l.valor??0).toFixed(2).replace('.',','),
+    l.qtdTransacoes??1,l.origem||'',l.categoria||'',l.conta||'',l.pago?'Sim':'Não',l.obs||''];
+}
+function baixar(nome,conteudo,tipo){
+  const blob=new Blob([conteudo],{type:tipo});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download=nome;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+const csvSeguro=s=>{const t=String(s??'');return /[;"\n]/.test(t)?'"'+t.replace(/"/g,'""')+'"':t;};
+
+function filtrosExport(){
+  if(!APP.export)APP.export={de:'',ate:'',tipo:'',forma:'',categoria:'',origem:'',conta:''};
+  return APP.export;
+}
+function dadosExport(){
+  const f=filtrosExport();
+  return getLanc().filter(l=>{
+    const d=l.diaOperacional||l.vencimento||'';
+    if(f.de&&d<f.de)return false;
+    if(f.ate&&d>f.ate)return false;
+    if(f.tipo&&l.tipo!==f.tipo)return false;
+    if(f.forma&&l.forma!==f.forma)return false;
+    if(f.categoria&&l.categoria!==f.categoria)return false;
+    if(f.origem&&l.origem!==f.origem)return false;
+    if(f.conta&&l.conta!==f.conta)return false;
+    return true;
+  }).sort((a,b)=>(a.diaOperacional||'').localeCompare(b.diaOperacional||''));
+}
+
+function renderExportar(){
+  const f=filtrosExport();
+  const todos=getLanc();
+  const cats=[...new Set(todos.map(l=>l.categoria).filter(Boolean))].sort();
+  const formas=[...new Set(todos.map(l=>l.forma).filter(Boolean))].sort();
+  const origens=[...new Set(todos.map(l=>l.origem).filter(Boolean))].sort();
+  const sel=(id,rot,val,ops)=>`<div class="fgroup" style="margin:0"><label>${rot}</label>
+    <select id="${id}"><option value="">Todos</option>${ops.map(o=>`<option ${val===o?'selected':''}>${esc(o)}</option>`).join('')}</select></div>`;
+
+  $('main').innerHTML=`
+    <div class="ph">
+      <div><h1>Exportar</h1><p>Levar os dados pra fora do sistema, sem retrabalho de formatação</p></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Filtros</div>
+      <div class="frow" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));align-items:end">
+        <div class="fgroup" style="margin:0"><label>De</label><input type="date" id="ex-de" value="${esc(f.de)}"></div>
+        <div class="fgroup" style="margin:0"><label>Até</label><input type="date" id="ex-ate" value="${esc(f.ate)}"></div>
+        ${sel('ex-tipo','Tipo',f.tipo,['receber','pagar'])}
+        ${sel('ex-forma','Forma',f.forma,formas)}
+        ${sel('ex-cat','Categoria',f.categoria,cats)}
+        ${sel('ex-origem','Origem',f.origem,origens)}
+        ${sel('ex-conta','Conta',f.conta,CONTAS)}
+      </div>
+      <div class="flex gap8" style="margin-top:12px"><button class="btn btn-s btn-sm" id="ex-aplicar">Aplicar filtros</button></div>
+      <div class="text-sm text-muted" style="margin-top:10px" id="ex-contagem"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Lançamentos</div>
+      <div class="text-sm text-muted" style="margin-bottom:12px">
+        Todos os ${COLS_EXPORT.length} campos, não uma versão resumida. CSV com ponto e vírgula, para abrir direto no Excel.
+      </div>
+      <div class="flex gap8" style="flex-wrap:wrap">
+        <button class="btn btn-p" id="ex-csv">⬇ CSV</button>
+        <button class="btn btn-s" id="ex-json">⬇ JSON</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="ctitle">Relatórios prontos</div>
+      <div class="flex gap8" style="flex-wrap:wrap">
+        <button class="btn btn-s" id="ex-alertas">⬇ Alertas (falhas e uso pessoal)</button>
+        <button class="btn btn-s" id="ex-resumo">⬇ Resumo por mês e forma</button>
+        <button class="btn btn-s" id="ex-saldo">⬇ Saldo por conta</button>
+      </div>
+      <div class="text-sm text-muted" style="margin-top:10px">Os três respeitam o intervalo de datas escolhido acima.</div>
+    </div>`;
+
+  const atualizarContagem=()=>{
+    const d=dadosExport();
+    $('ex-contagem').textContent=`${d.length} lançamento(s) no filtro atual, somando ${fBRL(d.reduce((s,l)=>s+(l.valorBruto??l.valor??0),0))} em valor bruto.`;
+  };
+  atualizarContagem();
+  $('ex-aplicar').addEventListener('click',()=>{
+    const f=filtrosExport();
+    f.de=v('ex-de');f.ate=v('ex-ate');f.tipo=$('ex-tipo').value;f.forma=$('ex-forma').value;
+    f.categoria=$('ex-cat').value;f.origem=$('ex-origem').value;f.conta=$('ex-conta').value;
+    atualizarContagem();toast('Filtros aplicados.');
+  });
+
+  const sufixo=()=>{const f=filtrosExport();return (f.de||'inicio')+'_a_'+(f.ate||'hoje');};
+
+  $('ex-csv').addEventListener('click',()=>{
+    const d=dadosExport();
+    if(!d.length){toast('Nada no filtro atual.',true);return;}
+    const linhas=[COLS_EXPORT.join(';'),...d.map(l=>linhaExport(l).map(csvSeguro).join(';'))];
+    baixar(`komboza-lancamentos-${sufixo()}.csv`,'﻿'+linhas.join('\r\n'),'text/csv;charset=utf-8;');
+    toast(`${d.length} lançamento(s) exportados.`);
+  });
+
+  $('ex-json').addEventListener('click',()=>{
+    const d=dadosExport();
+    if(!d.length){toast('Nada no filtro atual.',true);return;}
+    baixar(`komboza-lancamentos-${sufixo()}.json`,
+      JSON.stringify({gerado:agora(),filtros:filtrosExport(),corteOperacional:CORTE_OPERACIONAL,
+        percentualDinheiroEstimado:PCT_DINHEIRO,total:d.length,lancamentos:d},null,2),'application/json');
+    toast(`${d.length} lançamento(s) exportados.`);
+  });
+
+  $('ex-alertas').addEventListener('click',()=>{
+    const f=filtrosExport();
+    const dentro=x=>(!f.de||x>=f.de)&&(!f.ate||x<=f.ate);
+    const falhas=getFalhasStone().filter(x=>dentro(x.diaOperacional||''));
+    const pessoais=getLanc().filter(l=>l.foraDaAnalise&&dentro(l.diaOperacional||''));
+    const pendentes=getLanc().filter(l=>!l.categoria&&dentro(l.diaOperacional||l.vencimento||''));
+    const linhas=[['Alerta','Data','Hora','Bandeira','Produto/Descrição','Terminal','Valor','Detalhe'].join(';')];
+    falhas.forEach(x=>linhas.push(['Transação não aprovada',x.diaOperacional||'',
+      (x.dataVenda||'').slice(11),x.bandeira||'',x.produto||'',x.serie||'',
+      (x.valor||0).toFixed(2).replace('.',','),x.status||''].map(csvSeguro).join(';')));
+    pessoais.forEach(l=>linhas.push(['Uso pessoal (parcelamento)',l.diaOperacional||'',
+      (l.dataVenda||'').slice(11),l.bandeira||'',l.descricao||'','',
+      (l.valorBruto||0).toFixed(2).replace('.',','),'entra na base do Simples'].map(csvSeguro).join(';')));
+    pendentes.forEach(l=>linhas.push(['Sem categoria',l.diaOperacional||l.vencimento||'','','',l.descricao||'','',
+      (l.valorBruto??l.valor??0).toFixed(2).replace('.',','),'classificar'].map(csvSeguro).join(';')));
+    if(linhas.length===1){toast('Nenhum alerta no período.');return;}
+    baixar(`komboza-alertas-${sufixo()}.csv`,'﻿'+linhas.join('\r\n'),'text/csv;charset=utf-8;');
+    toast(`${linhas.length-1} alerta(s) exportados.`);
+  });
+
+  $('ex-resumo').addEventListener('click',()=>{
+    const d=dadosExport().filter(l=>l.tipo==='receber'&&!l.foraDaAnalise);
+    const mapa={};
+    d.forEach(l=>{
+      const ym=(l.diaOperacional||l.vencimento||'').slice(0,7);if(!ym)return;
+      const k=ym+'|'+(l.forma||'—')+'|'+(l.origem||'');
+      if(!mapa[k])mapa[k]={ym,forma:l.forma||'—',origem:l.origem||'',bruto:0,liquido:0,qtd:0};
+      mapa[k].bruto+=l.valorBruto??l.valor??0;mapa[k].liquido+=l.valorLiquido??l.valor??0;mapa[k].qtd++;
+    });
+    const itens=Object.values(mapa).sort((a,b)=>(a.ym+a.forma).localeCompare(b.ym+b.forma));
+    if(!itens.length){toast('Nada no filtro atual.',true);return;}
+    const linhas=[['Mês','Forma','Origem','Transações','Valor Bruto','Valor Líquido','Ticket Médio'].join(';')];
+    itens.forEach(i=>linhas.push([i.ym,i.forma,i.origem,i.qtd,
+      i.bruto.toFixed(2).replace('.',','),i.liquido.toFixed(2).replace('.',','),
+      (i.bruto/i.qtd).toFixed(2).replace('.',',')].map(csvSeguro).join(';')));
+    baixar(`komboza-resumo-${sufixo()}.csv`,'﻿'+linhas.join('\r\n'),'text/csv;charset=utf-8;');
+    toast('Resumo exportado.');
+  });
+
+  $('ex-saldo').addEventListener('click',()=>{
+    const d=dadosExport();
+    const linhas=[['Conta','Entradas','Saídas','Saldo','Obs'].join(';')];
+    CONTAS.forEach(c=>{
+      const da=d.filter(l=>l.conta===c&&l.pago);
+      const ent=da.filter(l=>l.tipo==='receber').reduce((s,l)=>s+(l.valorBruto??l.valor??0),0);
+      const sai=da.filter(l=>l.tipo==='pagar').reduce((s,l)=>s+(l.valorBruto??l.valor??0),0);
+      linhas.push([c,ent.toFixed(2).replace('.',','),sai.toFixed(2).replace('.',','),
+        (ent-sai).toFixed(2).replace('.',','),
+        c==='Dinheiro'?'zera por causa do custo espelho estimado':''].map(csvSeguro).join(';'));
+    });
+    baixar(`komboza-saldo-${sufixo()}.csv`,'﻿'+linhas.join('\r\n'),'text/csv;charset=utf-8;');
+    toast('Saldo exportado.');
   });
 }
 
