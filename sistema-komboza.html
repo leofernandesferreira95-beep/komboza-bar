@@ -139,6 +139,12 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
 .valor-pag,.valor-neg{color:var(--erro);}
 .num{font-variant-numeric:tabular-nums;}
 
+/* ── ABAS ── */
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px;}
+.tabbtn{padding:10px 18px;background:none;border:none;font-family:'Oswald',sans-serif;font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all .15s;}
+.tabbtn:hover{color:var(--text);}
+.tabbtn.active{color:#ff6b6e;border-bottom-color:var(--accent);}
+
 /* ── PAINEL ── */
 .fin-kgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px;}
 .kcard{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:18px;position:relative;overflow:hidden;}
@@ -195,17 +201,6 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
 .mfoot{padding:15px 22px;border-top:1px solid var(--border);display:flex;gap:10px;justify-content:flex-end;background:var(--bg-alt);border-radius:0 0 15px 15px;flex-wrap:wrap;}
 .resumo-box{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:13px;line-height:1.6;}
 .resumo-box .val{font-family:'Anton',sans-serif;font-size:20px;letter-spacing:.5px;}
-/* Fechamento de caixa: uma linha por forma de pagamento */
-.cx-linha{display:grid;grid-template-columns:1fr 118px 62px;gap:8px;align-items:center;margin-bottom:9px;}
-.cx-cab{display:grid;grid-template-columns:1fr 118px 62px;gap:8px;margin-bottom:6px;}
-.cx-cab span{font-family:'Oswald',sans-serif;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-3);text-align:right;}
-.cx-semtaxa{color:var(--text-3);text-align:center;font-size:12px;}
-.cx-resumo{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:11px 13px;margin-top:12px;font-size:13px;}
-.cx-linha label{font-family:'Oswald',sans-serif;font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.5px;color:var(--text-2);margin:0;}
-.cx-linha input{width:100%;padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-size:13.5px;font-family:'Inter',sans-serif;text-align:right;outline:none;font-variant-numeric:tabular-nums;}
-.cx-linha input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(192,24,27,.14);}
-.cx-total{display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--border);margin-top:14px;padding-top:12px;}
-.cx-total .v{font-family:'Anton',sans-serif;font-size:26px;color:var(--ok);letter-spacing:.5px;}
 
 /* ── TOAST / STATUS ── */
 #toasts{position:fixed;top:18px;right:18px;z-index:9999;display:flex;flex-direction:column;gap:8px;}
@@ -242,7 +237,6 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
   .c2,.c3{grid-template-columns:1fr;}
   .ag-cell{min-height:64px;}
   .ag-ev{font-size:9px;}
-  .cx-linha,.cx-cab{grid-template-columns:1fr 96px 54px;gap:6px;}
 }
 ::-webkit-scrollbar{width:9px;height:9px;}
 ::-webkit-scrollbar-track{background:transparent;}
@@ -310,7 +304,7 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
       <button class="nitem" data-tela="fixas"><span class="ni">🔁</span>Contas fixas</button>
       <button class="nitem" data-tela="previsao"><span class="ni">🔮</span>Previsão de caixa</button>
       <button class="nitem" data-tela="categorias"><span class="ni">🏷</span>Categorias</button>
-      <button class="nitem" data-tela="importar"><span class="ni">📁</span>Importar planilha</button>
+      <button class="nitem" data-tela="importar"><span class="ni">📁</span>Importar</button>
       <div class="nlbl">Agenda</div>
       <button class="nitem" data-tela="calendario"><span class="ni">📅</span>Calendário</button>
       <button class="nitem" data-tela="shows"><span class="ni">🎸</span>Shows</button>
@@ -342,17 +336,6 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
     <div class="mfoot">
       <button class="btn btn-s" data-close="m-baixa">Cancelar</button>
       <button class="btn btn-ok" id="btn-confirmar-baixa">Confirmar</button>
-    </div>
-  </div>
-</div>
-
-<div class="moverlay hidden" id="m-caixa">
-  <div class="modal" style="max-width:460px">
-    <div class="mhead"><h2>Fechar caixa do dia</h2><button class="mclose" data-close="m-caixa">✕</button></div>
-    <div class="mbody" id="caixa-body"></div>
-    <div class="mfoot">
-      <button class="btn btn-s" data-close="m-caixa">Cancelar</button>
-      <button class="btn btn-ok" id="btn-salvar-caixa">Lançar recebimentos</button>
     </div>
   </div>
 </div>
@@ -465,7 +448,7 @@ db.enablePersistence({synchronizeTabs:true}).catch(e=>{
 });
 
 // Chaves que sincronizam com a nuvem. Chave nova só sincroniza se entrar aqui.
-const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','taxasCartao','hist'];
+const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','falhasStone','hist'];
 const fsSyncQ={};
 
 // ═══════════════════════════════════════════════
@@ -753,46 +736,87 @@ const FORMAS_PAGTO=['PIX','Boleto','Dinheiro','Transferência','Cartão de créd
 const CORES_FORMA={'Dinheiro':'#5cb85c','PIX':'#4fb3d9','Cartão de débito':'#f5a623','Cartão de crédito':'#C0181B','Cartão CDL Brumadinho':'#9b6bd6'};
 const CAT_CACHE='Cachê de banda';
 const CAT_VENDAS='Vendas do dia';
-// Categoria fixa: a maquininha desconta a taxa antes de repassar, então a venda
-// entra pelo valor cheio e a taxa vira despesa. Sem separar assim, o resultado
-// do mês fica maior do que o dinheiro que realmente caiu na conta.
+
+// ═══════════ CONTAS ═══════════
+// Todo lançamento pertence a uma conta, para saber se o dinheiro está no banco
+// ou em espécie. Depósito do caixa no banco é transferência, não faturamento:
+// contar como receita faria a mesma venda entrar duas vezes.
+const CONTAS=['Sicredi','Dinheiro'];
+
+// ═══════════ DIA OPERACIONAL ═══════════
+// O bar vende de madrugada. Venda de 01:51 do sábado é faturamento da noite de
+// sexta. Corte às 06:00, aplicado pelo sistema — se dependesse de alguém
+// lembrar, cada análise sairia diferente.
+const CORTE_OPERACIONAL=6;
+// Trabalha com as partes da data, sem Date/fuso: converter para UTC e voltar
+// muda o dia em quem está em UTC-3 e quebraria justamente a madrugada.
+function diaOperacionalDe(p){
+  if(!p)return null;
+  let{ano,mes,dia,hora}=p;
+  if(hora<CORTE_OPERACIONAL){
+    const d=new Date(ano,mes-1,dia);d.setDate(d.getDate()-1);
+    ano=d.getFullYear();mes=d.getMonth()+1;dia=d.getDate();
+  }
+  return `${ano}-${String(mes).padStart(2,'0')}-${String(dia).padStart(2,'0')}`;
+}
+const somaDias=(iso,n)=>{const[y,m,d]=iso.split('-').map(Number);const x=new Date(y,m-1,d);x.setDate(x.getDate()+n);
+  return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;};
+
+// ═══════════ CATEGORIAS FIXAS ═══════════
+// Taxa da maquininha. Com o extrato da Stone ela vem pronta no MDR, então não
+// se digita mais percentual; a categoria segue existindo pelos lançamentos já
+// feitos e pelo relatório do cartão alimentação, que ainda vai entrar.
 const CAT_TAXA='Taxa de cartão';
-const FORMAS_COM_TAXA=['Cartão de débito','Cartão de crédito','Cartão CDL Brumadinho'];
-// Percentual por forma, guardado depois que o Leo preenche uma vez. Começa em
-// zero de propósito: taxa de maquininha varia por contrato e chutar um valor
-// daria número errado no relatório.
-const getTaxas=()=>Object.assign({},ls.g('taxasCartao',{})||{});
-const setTaxas=t=>ls.s('taxasCartao',t);
-const taxaDe=f=>parseFloat(getTaxas()[f])||0;
-const temTaxa=f=>FORMAS_COM_TAXA.includes(f);
+const CAT_FATURAMENTO='Faturamento com Vendas de Produtos';
+const CAT_TRANSFER='Transferência entre contas';
+const CAT_INSUMOS='Insumos';
+const CAT_PESSOAL='Uso pessoal — fora da operação';
+// Não podem ser renomeadas nem excluídas: os lançamentos automáticos apontam
+// para elas pelo nome.
+const CATS_FIXAS=[CAT_TAXA,CAT_FATURAMENTO,CAT_TRANSFER,CAT_PESSOAL];
 
-// Garante que a categoria fixa exista, sem mexer no que já está cadastrado.
-function garantirCategoriaTaxa(){
-  const c=getCats();
-  if((c.var||[]).includes(CAT_TAXA)||(c.fix||[]).includes(CAT_TAXA))return;
-  c.var=[...(c.var||[]),CAT_TAXA];
-  setCats(c);reloadCats();
-}
+// ═══════════ DINHEIRO ═══════════
+// Premissa, não medição: ninguém controla o caixa em espécie hoje. O pai do Leo
+// usa quase todo o dinheiro na operação, então cada venda estimada ganha um
+// custo espelho de mesmo valor — o resultado do Dinheiro fica zero de propósito.
+// Consequência conhecida: CMV sobe e margem cai. Por isso as análises isolam
+// Origem = Estimado.
+const PCT_DINHEIRO=15;
+// Reservado para quando o relatório do cartão alimentação entrar; ele não vem
+// no extrato do Stone.
+const TAXA_ALIMENTACAO=3.5;
 
-// Lançamento único da taxa do dia, já quitado — a operadora desconta na fonte.
-function lancarTaxaCartao(lancs,data,itens,obs){
-  const total=itens.reduce((s,i)=>s+i.taxa,0);
-  if(total<=0)return 0;
-  const detalhe=itens.filter(i=>i.taxa>0)
-    .map(i=>`${i.forma} ${fBRL(i.bruto)} a ${String(i.pct).replace('.',',')}% = ${fBRL(i.taxa)}`).join(' · ');
-  lancs.push({
-    id:uid('l'),tipo:'pagar',valor:Math.round(total*100)/100,
-    descricao:'Taxa de cartão — '+fmtData(data),
-    categoria:CAT_TAXA,forma:'',
-    vencimento:data,dataPagamento:data,pago:true,
-    totalParcelas:1,parcelaAtual:1,grupoId:null,
-    cliente:'',showId:null,
-    obs:[obs,detalhe].filter(Boolean).join(' | '),origem:'taxa',
-    criadoEm:agora(),atualizadoEm:agora()
+// ═══════════ MIGRAÇÃO ═══════════
+// Só acrescenta campo faltando. Nada existente é reescrito nem removido.
+function migrarLancamentos(){
+  const lancs=getLanc();let mudou=false;
+  lancs.forEach(l=>{
+    const antes=JSON.stringify(l);
+    if(l.conta===undefined)l.conta=(l.forma==='Dinheiro')?'Dinheiro':'Sicredi';
+    if(l.valorBruto===undefined)l.valorBruto=l.valor;
+    if(l.valorLiquido===undefined)l.valorLiquido=l.valor;
+    if(l.qtdTransacoes===undefined)l.qtdTransacoes=1;
+    if(l.bandeira===undefined)l.bandeira='';
+    if(l.dataVenda===undefined)l.dataVenda=null;
+    if(l.diaOperacional===undefined)l.diaOperacional=l.dataPagamento||l.vencimento||null;
+    if(l.dataRecebimento===undefined)l.dataRecebimento=l.dataPagamento||null;
+    if(l.origem===undefined)l.origem='manual';
+    if(l.foraDaAnalise===undefined)l.foraDaAnalise=false;
+    if(JSON.stringify(l)!==antes)mudou=true;
   });
-  return Math.round(total*100)/100;
+  if(mudou){setLanc(lancs);console.info('[KOMBOZA] Lançamentos migrados para o modelo novo.');}
 }
 
+// Garante as categorias fixas sem mexer no que já está cadastrado.
+function garantirCategorias(){
+  const c=getCats();let mudou=false;
+  const existe=n=>(c.rec||[]).includes(n)||(c.var||[]).includes(n)||(c.fix||[]).includes(n);
+  if(!existe(CAT_FATURAMENTO)){c.rec=[CAT_FATURAMENTO,...(c.rec||[])];mudou=true;}
+  [CAT_TAXA,CAT_INSUMOS,CAT_PESSOAL,CAT_TRANSFER].forEach(n=>{
+    if(!existe(n)){c.var=[...(c.var||[]),n];mudou=true;}
+  });
+  if(mudou){setCats(c);reloadCats();}
+}
 // ═══════════════════════════════════════════════
 // LOGIN
 // ═══════════════════════════════════════════════
@@ -885,7 +909,8 @@ auth.onAuthStateChanged(async user=>{
     $('sb-nome').textContent=APP.uid.nome;
     await fsPull();
     reloadCats();
-    garantirCategoriaTaxa();
+    migrarLancamentos();
+    garantirCategorias();
     fsStartSync();
     iniciarSyncPeriodico();
     navTo('painel');
@@ -1023,7 +1048,6 @@ function renderPainel(){
         <p>Como está o caixa do bar</p>
       </div>
       <div class="flex gap8" style="flex-wrap:wrap">
-        <button class="btn btn-ok" id="btn-caixa">💵 Fechar caixa do dia</button>
         <button class="btn btn-p" id="btn-novo-lanc">+ Lançamento</button>
       </div>
     </div>
@@ -1082,7 +1106,7 @@ function renderPainel(){
             </div>
             <div class="fp-track"><div class="fp-fill" style="width:${val/maxForma*100}%;background:${CORES_FORMA[f]}"></div></div>
           </div>`;
-        }).join(''):'<div class="vazio">Nada recebido neste mês ainda.<br>Use o botão “Fechar caixa do dia”.</div>'}
+        }).join(''):'<div class="vazio">Nada recebido neste mês ainda.<br>Importe o extrato da Stone.</div>'}
       </div>
       <div class="card">
         <div class="ctitle">Para onde foi o dinheiro</div>
@@ -1127,7 +1151,6 @@ function renderPainel(){
       </div>
     </div>`;
 
-  $('btn-caixa').addEventListener('click',abrirFechamentoCaixa);
   $('btn-novo-lanc').addEventListener('click',()=>abrirLancamento(null));
   $('mes-ant').addEventListener('click',()=>{APP.mesPainel=somaMes(ym,-1);renderPainel();});
   $('mes-prox').addEventListener('click',()=>{APP.mesPainel=somaMes(ym,1);renderPainel();});
@@ -1140,99 +1163,6 @@ function renderPainel(){
 // ═══════════════════════════════════════════════
 // A rotina real do bar: no fim da noite, lançar quanto entrou em cada forma de
 // pagamento. Gera um recebimento já pago por forma preenchida, tudo de uma vez.
-function abrirFechamentoCaixa(){
-  $('caixa-body').innerHTML=`
-    <div class="fgroup"><label>Dia do movimento</label>
-      <input type="date" id="cx-data" value="${hojeISO()}">
-    </div>
-    <div class="ctitle" style="margin:18px 0 10px">Quanto entrou em cada forma</div>
-    <div class="cx-cab"><span></span><span>Valor bruto</span><span>Taxa %</span></div>
-    ${FORMAS_REC.map((f,i)=>`
-      <div class="cx-linha">
-        <label for="cx-${i}">${esc(f)}</label>
-        <input type="number" id="cx-${i}" step="0.01" min="0" placeholder="0,00" data-cx="${esc(f)}">
-        ${temTaxa(f)
-          ?`<input type="number" id="cxt-${i}" step="0.01" min="0" max="100" placeholder="0" value="${taxaDe(f)||''}" title="Taxa da maquininha para ${esc(f)}">`
-          :`<span class="cx-semtaxa">—</span>`}
-      </div>`).join('')}
-    <div class="cx-total"><span class="fw6">Total bruto</span><span class="v num" id="cx-total">R$ 0,00</span></div>
-    <div class="cx-resumo" id="cx-resumo-taxa" style="display:none">
-      <div class="flex justify-between"><span>Taxa de cartão</span><span class="num valor-pag" id="cx-taxa">R$ 0,00</span></div>
-      <div class="flex justify-between fw6" style="margin-top:4px"><span>Cai na conta</span><span class="num valor-rec" id="cx-liquido">R$ 0,00</span></div>
-      <div class="text-sm text-muted" style="margin-top:6px">A venda entra pelo valor cheio e a taxa vira despesa em “${esc(CAT_TAXA)}”.</div>
-    </div>
-    <div class="fgroup" style="margin-top:16px"><label>Observação (opcional)</label>
-      <input type="text" id="cx-obs" placeholder="Ex: noite do show do Seattle's">
-    </div>
-    <div class="text-sm text-muted">A taxa de cada maquininha fica guardada e vem preenchida no próximo fechamento.</div>`;
-
-  const recalc=()=>{
-    let bruto=0,taxa=0;
-    FORMAS_REC.forEach((f,i)=>{
-      const v=nv('cx-'+i);bruto+=v;
-      if(temTaxa(f))taxa+=v*(nv('cxt-'+i)/100);
-    });
-    taxa=Math.round(taxa*100)/100;
-    $('cx-total').textContent=fBRL(bruto);
-    $('cx-taxa').textContent='− '+fBRL(taxa);
-    $('cx-liquido').textContent=fBRL(bruto-taxa);
-    $('cx-resumo-taxa').style.display=taxa>0?'block':'none';
-  };
-  FORMAS_REC.forEach((f,i)=>{
-    $('cx-'+i).addEventListener('input',recalc);
-    if(temTaxa(f))$('cxt-'+i).addEventListener('input',recalc);
-  });
-  openM('m-caixa');
-  $('cx-0').focus();
-}
-
-$('btn-salvar-caixa').addEventListener('click',()=>{
-  const data=v('cx-data');
-  if(!data){toast('Informe o dia.',true);return;}
-  const obs=v('cx-obs');
-  const entradas=FORMAS_REC.map((f,i)=>({forma:f,valor:nv('cx-'+i)})).filter(e=>e.valor>0);
-  if(!entradas.length){toast('Preencha ao menos uma forma de pagamento.',true);return;}
-
-  // Evita lançar o mesmo dia duas vezes sem querer
-  const lancs=getLanc();
-  const jaTem=lancs.some(l=>l.origem==='caixa'&&l.dataPagamento===data);
-  if(jaTem&&!confirm('Já existe um fechamento de caixa neste dia. Lançar mesmo assim?'))return;
-
-  const total=entradas.reduce((s,e)=>s+e.valor,0);
-  entradas.forEach(e=>{
-    lancs.push({
-      id:uid('l'),tipo:'receber',valor:e.valor,
-      descricao:'Vendas do dia'+(obs?' — '+obs:''),
-      categoria:CAT_VENDAS,forma:e.forma,
-      vencimento:data,dataPagamento:data,pago:true,
-      totalParcelas:1,parcelaAtual:1,grupoId:null,
-      cliente:'',showId:null,obs,origem:'caixa',
-      criadoEm:agora(),atualizadoEm:agora()
-    });
-  });
-
-  // Taxa de cartão: guarda os percentuais e lança a despesa do dia
-  const taxas=getTaxas();
-  const itensTaxa=[];
-  FORMAS_REC.forEach((f,i)=>{
-    if(!temTaxa(f))return;
-    const pct=nv('cxt-'+i),bruto=nv('cx-'+i);
-    taxas[f]=pct;
-    if(bruto>0&&pct>0)itensTaxa.push({forma:f,bruto,pct,taxa:Math.round(bruto*(pct/100)*100)/100});
-  });
-  setTaxas(taxas);
-  garantirCategoriaTaxa();
-  const totalTaxa=lancarTaxaCartao(lancs,data,itensTaxa,obs);
-
-  setLanc(lancs);
-  addHist('Fechamento de caixa '+fmtData(data),fBRL(total));
-  closeM('m-caixa');
-  toast(totalTaxa>0
-    ? `Caixa de ${fmtData(data)}: ${fBRL(total)} bruto, ${fBRL(totalTaxa)} de taxa.`
-    : `Caixa de ${fmtData(data)} fechado: ${fBRL(total)}`);
-  navTo(APP.tela);
-});
-
 // ═══════════════════════════════════════════════
 // LISTAS: A RECEBER / A PAGAR
 // ═══════════════════════════════════════════════
@@ -1465,35 +1395,8 @@ function abrirBaixa(id){
     <div class="fgroup"><label>${receber?'Recebido em':'Pago com'}</label>
       <select id="bx-forma">${formas.map(f=>`<option ${l.forma===f?'selected':''}>${esc(f)}</option>`).join('')}</select>
     </div>
-    ${receber?`
-      <div id="bx-taxa-wrap" style="display:none">
-        <div class="frow c2">
-          <div class="fgroup"><label>Taxa da maquininha (%)</label>
-            <input type="number" id="bx-taxa-pct" step="0.01" min="0" max="100" placeholder="0">
-          </div>
-          <div class="fgroup"><label>Desconto da taxa</label>
-            <input type="text" id="bx-taxa-valor" readonly style="opacity:.75">
-          </div>
-        </div>
-        <div class="text-sm text-muted" style="margin-top:-6px">Lançado à parte em “${esc(CAT_TAXA)}”. O recebimento continua pelo valor cheio.</div>
-      </div>`:''}
     <div class="text-sm text-muted" style="margin-top:10px">A forma escolhida aqui é a que aparece na separação do painel.</div>`;
 
-  if(receber){
-    const atualizarTaxa=()=>{
-      const f=$('bx-forma').value;
-      const mostra=temTaxa(f);
-      $('bx-taxa-wrap').style.display=mostra?'block':'none';
-      if(!mostra)return;
-      if(!$('bx-taxa-pct').value)$('bx-taxa-pct').value=taxaDe(f)||'';
-      const t=Math.round(nv('bx-valor')*(nv('bx-taxa-pct')/100)*100)/100;
-      $('bx-taxa-valor').value=fBRL(t);
-    };
-    $('bx-forma').addEventListener('change',()=>{$('bx-taxa-pct').value='';atualizarTaxa();});
-    $('bx-taxa-pct').addEventListener('input',atualizarTaxa);
-    $('bx-valor').addEventListener('input',atualizarTaxa);
-    atualizarTaxa();
-  }
   openM('m-baixa');
 }
 
@@ -1506,18 +1409,7 @@ $('btn-confirmar-baixa').addEventListener('click',()=>{
   const forma=$('bx-forma').value;
   l.pago=true;l.dataPagamento=data;l.forma=forma;l.valor=valor;l.atualizadoEm=agora();
 
-  // Recebimento no cartão: guarda o percentual e lança a taxa como despesa
   let totalTaxa=0;
-  if(l.tipo==='receber'&&temTaxa(forma)){
-    const pct=nv('bx-taxa-pct');
-    if(pct>0){
-      const taxas=getTaxas();taxas[forma]=pct;setTaxas(taxas);
-      garantirCategoriaTaxa();
-      totalTaxa=lancarTaxaCartao(lancs,data,
-        [{forma,bruto:valor,pct,taxa:Math.round(valor*(pct/100)*100)/100}], l.descricao);
-    }
-  }
-
   setLanc(lancs);
   addHist('Baixa: '+l.descricao,fBRL(valor));
   closeM('m-baixa');
@@ -1868,19 +1760,193 @@ $('excat-acao').addEventListener('click',()=>{
 });
 
 // ═══════════════════════════════════════════════
-// IMPORTAR PLANILHA
+// IMPORTAR EXTRATO DA STONE
 // ═══════════════════════════════════════════════
+// O extrato traz uma linha por transação. Essa granularidade é o que permite
+// ticket médio e horário de pico depois — agregar por dia jogaria fora.
+const STONE_COLS={
+  id:'stoneid',data:'datadavenda',bandeira:'bandeira',produto:'produto',
+  parcelas:'ndeparcelas',bruto:'valorbruto',liquido:'valorliquido',
+  mdr:'descontodemdr',status:'ultimostatus',serie:'ndeserie',doc:'documento'
+};
+// Voucher entra como crédito, conforme a spec. O cartão alimentação NÃO vem
+// neste extrato: virá de relatório próprio, com taxa fixa de 3,5%.
+const MAPA_PRODUTO={
+  'pix qrcode':'PIX','credito':'Cartão de crédito','crédito':'Cartão de crédito',
+  'debito':'Cartão de débito','débito':'Cartão de débito',
+  'debito pre-pago':'Cartão de débito','débito pré-pago':'Cartão de débito',
+  'voucher':'Cartão de crédito'
+};
+// Produto desconhecido não é chutado: o mapeamento que o usuário responder
+// fica guardado aqui e vale para as próximas importações.
+const getRegrasProduto=()=>ls.g('regrasProduto',{})||{};
+const setRegrasProduto=r=>ls.s('regrasProduto',r);
+const getFalhasStone=()=>ls.g('falhasStone',[]);
+const setFalhasStone=v=>ls.s('falhasStone',v);
+
+const chaveProduto=s=>semAcento(s).trim();
+function formaDoProduto(produto){
+  const k=chaveProduto(produto);
+  return MAPA_PRODUTO[k]||getRegrasProduto()[k]||null;
+}
+
+// '2.000,000000' → 2000. Milhar com ponto, decimal com vírgula.
+function numeroStone(s){
+  const t=String(s??'').trim();
+  if(!t)return 0;
+  return parseFloat(t.replace(/\./g,'').replace(',','.'))||0;
+}
+// 'DD/MM/AAAA HH:MM' → partes, sem passar por Date (fuso mudaria a madrugada)
+function dataHoraStone(s){
+  const m=String(s??'').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2}))?/);
+  if(!m)return null;
+  return{dia:+m[1],mes:+m[2],ano:+m[3],hora:m[4]!==undefined?+m[4]:0,min:m[5]!==undefined?+m[5]:0};
+}
+const isoDaData=p=>`${p.ano}-${String(p.mes).padStart(2,'0')}-${String(p.dia).padStart(2,'0')}`;
+const isoDataHora=p=>`${isoDaData(p)}T${String(p.hora).padStart(2,'0')}:${String(p.min).padStart(2,'0')}`;
+
+function analisarStone(texto){
+  const {cabecalho,dados}=lerCSV(texto);
+  if(!cabecalho.length)return{erroGeral:'Arquivo vazio.'};
+  const idx={};
+  cabecalho.forEach((h,i)=>{
+    const k=chaveCol(h);
+    for(const campo in STONE_COLS){if(STONE_COLS[campo]===k&&idx[campo]===undefined)idx[campo]=i;}
+  });
+  const faltando=['id','data','produto','bruto','status'].filter(c=>idx[c]===undefined);
+  if(faltando.length)return{erroGeral:'Não parece um extrato da Stone: faltam as colunas '+faltando.map(c=>STONE_COLS[c]).join(', ')+'.'};
+
+  const jaImportados=new Set(getLanc().filter(l=>l.stoneId).map(l=>String(l.stoneId)));
+  getFalhasStone().forEach(f=>jaImportados.add(String(f.stoneId)));
+  const pega=(l,c)=>idx[c]!==undefined?(l[idx[c]]??''):'';
+  const vistosNoArquivo=new Set();
+
+  const linhas=dados.map((l,n)=>{
+    const stoneId=String(pega(l,'id')).trim();
+    const p=dataHoraStone(pega(l,'data'));
+    const bruto=numeroStone(pega(l,'bruto'));
+    const liquido=numeroStone(pega(l,'liquido'))||bruto;
+    const mdr=numeroStone(pega(l,'mdr'));
+    const parcelas=parseInt(numeroStone(pega(l,'parcelas')))||1;
+    const produto=String(pega(l,'produto')).trim();
+    const status=String(pega(l,'status')).trim();
+    const bandeira=String(pega(l,'bandeira')).trim();
+    const serie=String(pega(l,'serie')).trim();
+    const aprovada=semAcento(status)==='aprovada';
+    const forma=formaDoProduto(produto);
+
+    let situacao='ok',motivo='';
+    if(!stoneId){situacao='erro';motivo='sem STONE ID';}
+    else if(!p){situacao='erro';motivo='data inválida';}
+    else if(jaImportados.has(stoneId)){situacao='repetido';motivo='já importado antes';}
+    else if(vistosNoArquivo.has(stoneId)){situacao='repetido';motivo='repetido neste arquivo';}
+    else if(!aprovada){situacao='falha';motivo=status||'não aprovada';}
+    else if(parcelas>1){situacao='pessoal';motivo=parcelas+'x — uso pessoal';}
+    else if(!forma){situacao='pendente';motivo='produto não mapeado';}
+    if(stoneId)vistosNoArquivo.add(stoneId);
+
+    const diaOp=p?diaOperacionalDe(p):null;
+    // Crédito cai em D+1; PIX e débito no mesmo dia
+    const receb=diaOp?(forma==='Cartão de crédito'?somaDias(isoDaData(p),1):isoDaData(p)):null;
+
+    return{n:n+2,stoneId,produto,forma,bandeira,serie,status,parcelas,bruto,liquido,mdr,
+      dataVenda:p?isoDataHora(p):null,diaOperacional:diaOp,dataRecebimento:receb,situacao,motivo};
+  });
+
+  return{linhas,produtosPendentes:[...new Set(linhas.filter(l=>l.situacao==='pendente').map(l=>l.produto))]};
+}
+
+// Grava o que veio do extrato. Só acrescenta: nada existente é tocado.
+function gravarStone(linhas){
+  garantirCategorias();
+  const lancs=getLanc();
+  const falhas=getFalhasStone();
+  let vendas=0,pessoais=0,novasFalhas=0;
+
+  linhas.forEach(l=>{
+    if(l.situacao==='falha'){
+      // Fora das análises, mas arquivada: pode ser terminal com defeito,
+      // cartão recusado ou venda perdida. O nº de série ajuda a achar padrão.
+      falhas.push({stoneId:l.stoneId,dataVenda:l.dataVenda,diaOperacional:l.diaOperacional,
+        bandeira:l.bandeira,produto:l.produto,valor:l.bruto,status:l.status,serie:l.serie,
+        registradoEm:agora()});
+      novasFalhas++;return;
+    }
+    if(l.situacao!=='ok'&&l.situacao!=='pessoal')return;
+
+    const pessoal=l.situacao==='pessoal';
+    lancs.push({
+      id:uid('l'),stoneId:l.stoneId,
+      tipo:'receber',
+      valor:l.bruto,valorBruto:l.bruto,valorLiquido:l.liquido,
+      descricao:pessoal?`Parcelamento ${l.parcelas}x — uso pessoal`:'Venda Stone',
+      // Parcelamento passa pelo CNPJ e entra na base do Simples, então fica
+      // registrado e rastreável, só fora das análises do bar.
+      categoria:pessoal?CAT_PESSOAL:CAT_FATURAMENTO,
+      forma:l.forma||'',bandeira:l.bandeira,
+      conta:'Sicredi',
+      dataVenda:l.dataVenda,diaOperacional:l.diaOperacional,
+      dataRecebimento:l.dataRecebimento,
+      vencimento:l.dataRecebimento,dataPagamento:l.dataRecebimento,pago:true,
+      qtdTransacoes:1,totalParcelas:l.parcelas,parcelaAtual:1,grupoId:null,
+      cliente:'',showId:null,foraDaAnalise:pessoal,
+      obs:[l.produto,l.mdr?'MDR '+fBRL(l.mdr):''].filter(Boolean).join(' · '),
+      origem:'Stone',criadoEm:agora(),atualizadoEm:agora()
+    });
+    if(pessoal)pessoais++;else vendas++;
+  });
+
+  setFalhasStone(falhas);
+  const dias=[...new Set(linhas.filter(l=>l.situacao==='ok'&&l.diaOperacional).map(l=>l.diaOperacional))];
+  const est=estimarDinheiro(lancs,dias);
+  setLanc(lancs);
+  addHist('Importou extrato Stone',`${vendas} venda(s)`);
+  return{vendas,pessoais,falhas:novasFalhas,dias:dias.length,estimado:est};
+}
+
+// Venda em dinheiro estimada em 15% do cartão+PIX do dia, com custo espelho de
+// mesmo valor — o pai do Leo gasta quase tudo na operação. É premissa, não
+// medição: por isso vai marcada como Estimado e sai das análises de cliente.
+// Recalcula em cima do próprio lançamento quando o dia é reimportado, em vez de
+// apagar e recriar.
+function estimarDinheiro(lancs,dias){
+  let criados=0,total=0;
+  dias.forEach(dia=>{
+    const base=lancs.filter(l=>l.origem==='Stone'&&!l.foraDaAnalise&&l.diaOperacional===dia)
+      .reduce((s,l)=>s+(l.valorBruto||0),0);
+    if(base<=0)return;
+    const valor=Math.round(base*(PCT_DINHEIRO/100)*100)/100;
+    total+=valor;
+    const marca=(l,tp)=>l.origem==='Estimado'&&l.diaOperacional===dia&&l.tipo===tp;
+    const venda=lancs.find(l=>marca(l,'receber'));
+    const custo=lancs.find(l=>marca(l,'pagar'));
+    const comum={valor,valorBruto:valor,valorLiquido:valor,conta:'Dinheiro',
+      diaOperacional:dia,vencimento:dia,dataPagamento:dia,dataRecebimento:dia,
+      pago:true,qtdTransacoes:1,origem:'Estimado',atualizadoEm:agora(),
+      obs:`${PCT_DINHEIRO}% de ${fBRL(base)} em cartão e PIX`};
+    if(venda)Object.assign(venda,comum);
+    else{lancs.push({id:uid('l'),tipo:'receber',descricao:'Venda em dinheiro (estimada)',
+      categoria:CAT_FATURAMENTO,forma:'Dinheiro',bandeira:'',dataVenda:null,
+      totalParcelas:1,parcelaAtual:1,grupoId:null,cliente:'',showId:null,
+      foraDaAnalise:false,criadoEm:agora(),...comum});criados++;}
+    if(custo)Object.assign(custo,comum);
+    else{lancs.push({id:uid('l'),tipo:'pagar',descricao:'Custo pago em dinheiro (estimado)',
+      categoria:CAT_INSUMOS,forma:'Dinheiro',bandeira:'',dataVenda:null,
+      totalParcelas:1,parcelaAtual:1,grupoId:null,cliente:'',showId:null,
+      foraDaAnalise:false,criadoEm:agora(),...comum});criados++;}
+  });
+  return{criados,total};
+}
 // Pensado para colar o extrato do banco: a planilha modelo usa ponto e vírgula
 // (padrão do Excel em português) e cabeçalho em português. A importação só
 // ACRESCENTA lançamentos, nunca substitui o que já existe.
-const COLUNAS_MODELO=['Data','Tipo','Descrição','Valor','Categoria','Forma','Pago','Taxa %'];
+const COLUNAS_MODELO=['Data','Tipo','Descrição','Valor','Categoria','Forma','Pago'];
 
 function baixarModeloPlanilha(){
   const ex=[
-    ['05/09/2026','Pagar','Distribuidora de bebida','1650,00','Bebidas / Estoque','Boleto','Nao',''],
-    ['06/09/2026','Receber','Vendas do dia','3750,00','Vendas do dia','Dinheiro','Sim',''],
-    ['07/09/2026','Receber','Vendas no cartao','2400,00','Vendas do dia','Cartão de crédito','Sim','3,20'],
-    ['10/09/2026','Pagar','Conta de energia','640,00','Energia','Boleto','Nao','']
+    ['05/09/2026','Pagar','Distribuidora de bebida','1650,00','Bebidas / Estoque','Boleto','Nao'],
+    ['06/09/2026','Receber','Aluguel do espaço','1500,00','Aluguel do espaço','PIX','Sim'],
+    ['10/09/2026','Pagar','Conta de energia','640,00','Energia','Boleto','Nao']
   ];
   const linhas=[COLUNAS_MODELO.join(';'), ...ex.map(l=>l.join(';'))];
   // BOM na frente para o Excel abrir com acento correto
@@ -1926,8 +1992,7 @@ const ALIAS_COL={
   valor:['valor','vlr','montante','quantia'],
   categoria:['categoria','cat','classificacao'],
   forma:['forma','formapagamento','formadepagamento','pagamento','meio'],
-  pago:['pago','quitado','baixado','status','situacao'],
-  taxa:['taxa','taxapercent','taxacartao','taxadocartao','percentual','tarifa']
+  pago:['pago','quitado','baixado','status','situacao']
 };
 
 function lerValorBR(s){
@@ -1971,7 +2036,7 @@ function analisarPlanilha(texto){
   return{linhas:dados.map((l,n)=>{
     const bruto={
       data:pega(l,'data'),tipo:pega(l,'tipo'),descricao:pega(l,'descricao'),
-      valor:pega(l,'valor'),categoria:pega(l,'categoria'),forma:pega(l,'forma'),pago:pega(l,'pago'),taxa:pega(l,'taxa')
+      valor:pega(l,'valor'),categoria:pega(l,'categoria'),forma:pega(l,'forma'),pago:pega(l,'pago')
     };
     const erros=[],avisos=[];
     const venc=lerDataBR(bruto.data);
@@ -2001,15 +2066,7 @@ function analisarPlanilha(texto){
       semAcento(e.descricao||'')===semAcento(descricao));
     if(dup)avisos.push('já existe no sistema');
 
-    // Taxa só faz sentido em recebimento no cartão; fora disso é ignorada
-    let taxaPct=lerValorBR(bruto.taxa);
-    if(isNaN(taxaPct)||taxaPct<0)taxaPct=0;
-    if(taxaPct>0&&(tipo!=='receber'||!temTaxa(bruto.forma||''))){
-      avisos.push('taxa ignorada (só vale em recebimento no cartão)');taxaPct=0;
-    }
-    if(taxaPct>100){erros.push('taxa acima de 100%');taxaPct=0;}
-
-    return{n:n+2,venc,tipo,descricao,valor,categoria,forma:bruto.forma||'',pago,taxaPct,erros,avisos,dup};
+    return{n:n+2,venc,tipo,descricao,valor,categoria,forma:bruto.forma||'',pago,erros,avisos,dup};
   })};
 }
 
@@ -2026,12 +2083,29 @@ function marcarRepetidasNoArquivo(linhas){
   return linhas;
 }
 
+let fonteImport='stone';
 function renderImportar(){
+  if(fonteImport==='stone')return renderImportarStone();
+  return renderImportarPlanilha();
+}
+const abasImport=()=>`
+  <div class="tabs">
+    <button class="tabbtn ${fonteImport==='stone'?'active':''}" data-fonte="stone">Extrato Stone</button>
+    <button class="tabbtn ${fonteImport==='planilha'?'active':''}" data-fonte="planilha">Planilha modelo</button>
+  </div>`;
+function ligarAbasImport(){
+  $('main').querySelectorAll('[data-fonte]').forEach(b=>b.addEventListener('click',()=>{
+    fonteImport=b.dataset.fonte;renderImportar();
+  }));
+}
+
+function renderImportarPlanilha(){
   $('main').innerHTML=`
     <div class="ph">
-      <div><h1>Importar planilha</h1><p>Lançar vários de uma vez, direto do extrato do banco</p></div>
+      <div><h1>Importar</h1><p>Lançar vários de uma vez</p></div>
       <button class="btn btn-s" id="btn-modelo">⬇ Baixar planilha modelo</button>
     </div>
+    ${abasImport()}
     <div class="card" style="margin-bottom:16px">
       <div class="ctitle">Como funciona</div>
       <ol style="margin:0 0 0 18px;font-size:13px;line-height:1.9;color:var(--text-2)">
@@ -2044,16 +2118,14 @@ function renderImportar(){
         Colunas: ${COLUNAS_MODELO.join(' · ')}. Só <strong>Data</strong> e <strong>Valor</strong> são obrigatórias.
         Sem a coluna Tipo, valor negativo vira saída e positivo vira entrada, que é como o extrato costuma vir.
       </div>
-      <div class="text-sm text-muted" style="margin-top:8px">
-        <strong>Taxa %</strong> só vale em recebimento no cartão. A venda entra pelo valor cheio e a taxa
-        vira uma despesa do dia em “${esc(CAT_TAXA)}”.
-      </div>
+
     </div>
     <div class="card" style="margin-bottom:16px">
       <div class="ctitle">Escolher arquivo</div>
       <input type="file" id="imp-arquivo" accept=".csv,.txt,text/csv" style="width:100%;padding:10px;border:1.5px dashed var(--border);border-radius:8px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:'Inter',sans-serif;cursor:pointer">
     </div>
     <div id="imp-previa"></div>`;
+  ligarAbasImport();
   $('btn-modelo').addEventListener('click',baixarModeloPlanilha);
   $('imp-arquivo').addEventListener('change',e=>{
     const f=e.target.files&&e.target.files[0];
@@ -2094,7 +2166,7 @@ function mostrarPreviaImport(texto){
       ${dups?`<div class="text-sm" style="color:var(--amber);margin-bottom:10px">Alguns lançamentos já existem com a mesma data, valor e descrição. Desmarque se não quiser repetir.</div>`:''}
       <div class="twrap" style="max-height:420px;overflow-y:auto">
         <table>
-          <thead><tr><th></th><th>Linha</th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th><th style="text-align:right">Taxa</th><th>Situação</th></tr></thead>
+          <thead><tr><th></th><th>Linha</th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th><th>Situação</th></tr></thead>
           <tbody>${linhasImport.map((l,i)=>`
             <tr>
               <td>${l.erros.length?'':`<input type="checkbox" class="imp-ck" data-i="${i}" ${l.dup?'':'checked'} style="width:15px;height:15px;accent-color:var(--accent)">`}</td>
@@ -2104,7 +2176,6 @@ function mostrarPreviaImport(texto){
               <td>${esc(l.descricao)}</td>
               <td>${esc(l.categoria)||'—'}</td>
               <td class="num fw6 ${l.tipo==='receber'?'valor-rec':'valor-pag'}" style="text-align:right">${isNaN(l.valor)?'—':esc(fBRL(l.valor))}</td>
-              <td class="num text-sm" style="text-align:right;color:var(--text-2)">${l.taxaPct>0?esc(String(l.taxaPct).replace('.',','))+'% · '+esc(fBRL(Math.round(l.valor*(l.taxaPct/100)*100)/100)):'—'}</td>
               <td class="text-sm">${l.erros.length
                 ?`<span style="color:var(--erro)">${esc(l.erros.join(', '))}</span>`
                 :(l.avisos.length?`<span style="color:var(--amber)">${esc(l.avisos.join(', '))}</span>`:'<span style="color:var(--ok)">ok</span>')}</td>
@@ -2136,22 +2207,161 @@ function mostrarPreviaImport(texto){
         criadoEm:agora(),atualizadoEm:agora()
       });
     });
-    // Taxas das linhas de cartão viram uma despesa por dia, não uma por linha
-    const porDia={};
-    escolhidas.filter(l=>l.taxaPct>0).forEach(l=>{
-      (porDia[l.venc]=porDia[l.venc]||[]).push(
-        {forma:l.forma,bruto:l.valor,pct:l.taxaPct,taxa:Math.round(l.valor*(l.taxaPct/100)*100)/100});
-    });
-    let totalTaxa=0;
-    if(Object.keys(porDia).length)garantirCategoriaTaxa();
-    Object.entries(porDia).forEach(([dia,itens])=>{
-      totalTaxa+=lancarTaxaCartao(lancs,dia,itens,'Importado de planilha');
-    });
     setLanc(lancs);
     addHist('Importou planilha',`${escolhidas.length} lançamento(s)`);
-    toast(totalTaxa>0
-      ? `${escolhidas.length} lançamento(s) importados e ${fBRL(totalTaxa)} de taxa lançada.`
-      : `${escolhidas.length} lançamento(s) importados.`);
+    toast(`${escolhidas.length} lançamento(s) importados.`);
+    navTo('painel');
+  });
+}
+
+// ── Tela: extrato da Stone ──
+let linhasStone=[];
+function renderImportarStone(){
+  $('main').innerHTML=`
+    <div class="ph">
+      <div><h1>Importar</h1><p>Extrato da Stone — uma linha por transação</p></div>
+    </div>
+    ${abasImport()}
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Como funciona</div>
+      <ol style="margin:0 0 0 18px;font-size:13px;line-height:1.9;color:var(--text-2)">
+        <li>Baixe o extrato de vendas no portal da Stone, em <strong>CSV</strong>.</li>
+        <li>Escolha o arquivo aqui embaixo.</li>
+        <li>Confira o resumo e confirme.</li>
+      </ol>
+      <div class="text-sm text-muted" style="margin-top:12px">
+        Cada venda vira um lançamento com data, <strong>hora</strong>, bandeira, valor bruto e líquido.
+        O dia operacional usa corte às ${CORTE_OPERACIONAL}h: venda de madrugada conta para a noite anterior.
+        Crédito cai em D+1; PIX e débito no mesmo dia.
+      </div>
+      <div class="text-sm text-muted" style="margin-top:8px">
+        Importar o mesmo arquivo duas vezes não duplica nada: o <strong>STONE ID</strong> é a chave.
+        Transações não aprovadas e parcelamentos ficam de fora das análises, mas são arquivados.
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Escolher arquivo</div>
+      <input type="file" id="st-arquivo" accept=".csv,.txt,text/csv" style="width:100%;padding:10px;border:1.5px dashed var(--border);border-radius:8px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:'Inter',sans-serif;cursor:pointer">
+    </div>
+    <div id="st-previa"></div>`;
+  ligarAbasImport();
+  $('st-arquivo').addEventListener('change',e=>{
+    const f=e.target.files&&e.target.files[0];
+    if(!f)return;
+    const fr=new FileReader();
+    fr.onload=()=>{
+      let txt=String(fr.result||'');
+      if(txt.includes('�')){
+        const fr2=new FileReader();
+        fr2.onload=()=>previaStone(String(fr2.result||''));
+        fr2.readAsText(f,'ISO-8859-1');return;
+      }
+      previaStone(txt);
+    };
+    fr.readAsText(f,'UTF-8');
+  });
+}
+
+function previaStone(texto){
+  const r=analisarStone(texto);
+  const box=$('st-previa');
+  if(r.erroGeral){box.innerHTML=`<div class="card"><div class="vazio" style="color:var(--erro)">${esc(r.erroGeral)}</div></div>`;return;}
+  linhasStone=r.linhas;
+  const cont=s=>linhasStone.filter(l=>l.situacao===s);
+  const ok=cont('ok'),falha=cont('falha'),pessoal=cont('pessoal'),rep=cont('repetido'),pend=cont('pendente'),erro=cont('erro');
+  const soma=a=>a.reduce((s,l)=>s+l.bruto,0);
+  const dias=[...new Set(ok.map(l=>l.diaOperacional))];
+  const estim=Math.round(soma(ok)*(PCT_DINHEIRO/100)*100)/100;
+
+  box.innerHTML=`
+    ${pend.length?`
+    <div class="card" style="margin-bottom:16px;border-color:rgba(245,166,35,.4)">
+      <div class="ctitle" style="color:var(--amber)">Produto não reconhecido — precisa da sua resposta</div>
+      <div class="text-sm text-muted" style="margin-bottom:12px">
+        ${pend.length} transação(ões) usam um produto que o sistema não conhece. Não vou classificar
+        por aproximação. Diga o que é cada um e a regra fica guardada para as próximas importações.
+      </div>
+      ${r.produtosPendentes.map((p,i)=>`
+        <div class="flex gap8 items-center" style="margin-bottom:8px;flex-wrap:wrap">
+          <strong style="flex:1;min-width:150px">${esc(p)}</strong>
+          <span class="text-sm text-muted">${cont('pendente').filter(l=>l.produto===p).length} transação(ões)</span>
+          <select data-mapa="${esc(p)}" style="padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:'Inter',sans-serif">
+            <option value="">— escolher —</option>
+            ${FORMAS_REC.map(f=>`<option>${esc(f)}</option>`).join('')}
+          </select>
+        </div>`).join('')}
+      <button class="btn btn-s btn-sm" id="btn-salvar-mapa" style="margin-top:6px">Salvar e reconferir</button>
+    </div>`:''}
+
+    <div class="card">
+      <div class="ctitle">Resumo do arquivo</div>
+      <div class="fin-kgrid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kcard"><div class="kval valor-pos num">${ok.length}</div><div class="klbl">Vendas a importar</div><div class="ksub">${esc(fBRL(soma(ok)))} bruto</div></div>
+        <div class="kcard"><div class="kval num" style="color:var(--amber)">${rep.length}</div><div class="klbl">Já importadas</div><div class="ksub">ignoradas pelo Stone ID</div></div>
+        <div class="kcard"><div class="kval valor-neg num">${falha.length}</div><div class="klbl">Não aprovadas</div><div class="ksub">${esc(fBRL(soma(falha)))} tentados</div></div>
+      </div>
+      <div class="fin-kgrid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kcard"><div class="kval num" style="color:var(--amber)">${pessoal.length}</div><div class="klbl">Parcelamentos</div><div class="ksub">${esc(fBRL(soma(pessoal)))} — uso pessoal</div></div>
+        <div class="kcard"><div class="kval num" style="color:var(--amber)">${pend.length}</div><div class="klbl">Produto pendente</div><div class="ksub">não entram sem resposta</div></div>
+        <div class="kcard"><div class="kval valor-rec num">${esc(fBRL(estim))}</div><div class="klbl">Dinheiro estimado</div><div class="ksub">${PCT_DINHEIRO}% em ${dias.length} dia(s)</div></div>
+      </div>
+
+      ${falha.length?`
+        <div class="ctitle" style="margin-top:18px">Não aprovadas — vale conferir o terminal</div>
+        <div class="twrap"><table>
+          <thead><tr><th>Data</th><th>Bandeira</th><th>Produto</th><th>Status</th><th>Terminal</th><th style="text-align:right">Valor</th></tr></thead>
+          <tbody>${falha.slice(0,15).map(l=>`<tr>
+            <td class="num">${esc(l.dataVenda?fmtData(l.dataVenda.slice(0,10))+' '+l.dataVenda.slice(11):'—')}</td>
+            <td>${esc(l.bandeira)||'—'}</td><td>${esc(l.produto)}</td>
+            <td><span class="bdg bvm">${esc(l.status)}</span></td>
+            <td class="num text-sm">${esc(l.serie)||'—'}</td>
+            <td class="num valor-pag" style="text-align:right">${esc(fBRL(l.bruto))}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`:''}
+
+      ${pessoal.length?`
+        <div class="ctitle" style="margin-top:18px">Parcelamentos — uso pessoal</div>
+        <div class="text-sm text-muted" style="margin-bottom:8px">
+          O bar não parcela venda, então parcelamento no extrato é uso pessoal da maquininha.
+          Passa pelo CNPJ e entra na base do Simples, por isso fica registrado e rastreável.
+        </div>
+        <div class="twrap"><table>
+          <thead><tr><th>Data</th><th>Parcelas</th><th>Bandeira</th><th style="text-align:right">Valor</th></tr></thead>
+          <tbody>${pessoal.map(l=>`<tr>
+            <td class="num">${esc(l.dataVenda?fmtData(l.dataVenda.slice(0,10)):'—')}</td>
+            <td>${l.parcelas}x</td><td>${esc(l.bandeira)||'—'}</td>
+            <td class="num" style="text-align:right">${esc(fBRL(l.bruto))}</td>
+          </tr>`).join('')}</tbody>
+        </table></div>`:''}
+
+      ${erro.length?`<div class="text-sm" style="color:var(--erro);margin-top:14px">${erro.length} linha(s) com problema no arquivo e serão ignoradas.</div>`:''}
+
+      <div class="flex gap8" style="margin-top:18px;flex-wrap:wrap">
+        <button class="btn btn-p" id="btn-gravar-stone" ${ok.length||falha.length||pessoal.length?'':'disabled'}>Importar</button>
+        <span class="text-sm text-muted" style="align-self:center">Só acrescenta. Nada do que já existe é alterado.</span>
+      </div>
+    </div>`;
+
+  if(pend.length)$('btn-salvar-mapa').addEventListener('click',()=>{
+    const regras=getRegrasProduto();let n=0;
+    box.querySelectorAll('[data-mapa]').forEach(s=>{
+      if(s.value){regras[chaveProduto(s.dataset.mapa)]=s.value;n++;}
+    });
+    if(!n){toast('Escolha ao menos um produto.',true);return;}
+    setRegrasProduto(regras);
+    toast(`${n} regra(s) guardada(s).`);
+    previaStone(texto);
+  });
+
+  $('btn-gravar-stone').addEventListener('click',()=>{
+    const resumo=[];
+    if(ok.length)resumo.push(`${ok.length} venda(s)`);
+    if(pessoal.length)resumo.push(`${pessoal.length} parcelamento(s) como uso pessoal`);
+    if(falha.length)resumo.push(`${falha.length} falha(s) arquivada(s)`);
+    if(pend.length)resumo.push(`${pend.length} ficam de fora por produto não mapeado`);
+    if(!confirm('Importar?\n\n'+resumo.join('\n')+'\n\nNada do que já está no sistema será alterado.'))return;
+    const res=gravarStone(linhasStone);
+    toast(`${res.vendas} venda(s) importadas.`+(res.estimado.criados?` Dinheiro estimado em ${res.dias} dia(s).`:''));
     navTo('painel');
   });
 }
