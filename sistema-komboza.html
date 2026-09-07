@@ -147,7 +147,6 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
 .klbl{font-size:12px;color:var(--text-2);}
 .ksub{font-size:11px;color:var(--text-3);margin-top:5px;}
 .mgr{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;}
-.mstack{display:grid;gap:16px;margin-bottom:16px;}
 /* Barras do fluxo mensal: CSS puro, sem biblioteca de gráfico */
 .fin-bar-wrap{display:flex;align-items:flex-end;gap:10px;justify-content:space-around;padding:14px 0;}
 .fin-bar-col{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;}
@@ -226,12 +225,6 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
 #mob-menu{display:none;position:fixed;top:12px;left:12px;z-index:300;background:var(--surface2);color:var(--text);border:1px solid var(--border);border-radius:8px;width:42px;height:42px;font-size:19px;cursor:pointer;align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,.5);}
 #mob-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99;}
 #mob-overlay.show{display:block;}
-/* O calendário precisa de largura: abaixo disso a coluna "Próximos" desce pra
-   baixo em vez de espremer a grade de 7 dias. O !important é necessário porque
-   as colunas vêm de style inline, que ganha da media query sem ele. */
-@media(max-width:1040px){
-  .mstack{grid-template-columns:1fr!important;}
-}
 @media(max-width:900px){
   .fin-kgrid{grid-template-columns:1fr 1fr;}
   .mgr{grid-template-columns:1fr;}
