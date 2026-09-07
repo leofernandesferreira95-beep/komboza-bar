@@ -26,14 +26,13 @@ jobs:
           channelId: live
           projectId: kombozabar-1aa4a
 
-      # As regras do Firestore são a única coisa que impede alguém de ler os
-      # dados do bar. Publicar junto evita o site subir com regra velha.
-      # Roda depois do hosting de propósito: se faltar permissão na conta de
-      # serviço, o site já está no ar e só este passo falha, bem visível.
-      - name: Publica as regras do Firestore
-        run: |
-          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KOMBOZABAR_1AA4A }}' > "$RUNNER_TEMP/sa.json"
-          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
-          npx --yes firebase-tools@latest deploy --only firestore:rules \
-            --project kombozabar-1aa4a --non-interactive
-          rm -f "$RUNNER_TEMP/sa.json"
+# ATENÇÃO: as regras do Firestore (firestore.rules) NÃO sobem neste deploy.
+# A conta de serviço do GitHub só tem permissão de Hosting; publicar regras por
+# aqui devolve 403 na API firebaserules.googleapis.com.
+#
+# Depois de mexer no firestore.rules, publique à mão:
+#     npx firebase-tools@latest deploy --only firestore:rules --project kombozabar-1aa4a
+# e confirme o que ficou no ar antes de considerar feito.
+#
+# Para automatizar: conceda à conta de serviço do GitHub o papel
+# "Firebase Rules Admin" no IAM do projeto e traga o passo de volta.
