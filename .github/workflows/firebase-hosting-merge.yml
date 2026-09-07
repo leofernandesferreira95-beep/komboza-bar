@@ -11,9 +11,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # public/sistema/index.html é gerado aqui a partir da fonte, por isso não
+      # é versionado. Editar o arquivo gerado não tem efeito: ele é sobrescrito.
+      - name: Monta a pasta public/sistema a partir da fonte
+        run: |
+          mkdir -p public/sistema
+          cp sistema-komboza.html public/sistema/index.html
+
       - uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_KOMBOZABAR_1AA4A }}
           channelId: live
           projectId: kombozabar-1aa4a
+
+      # As regras do Firestore são a única coisa que impede alguém de ler os
+      # dados do bar. Publicar junto evita o site subir com regra velha.
+      # Roda depois do hosting de propósito: se faltar permissão na conta de
+      # serviço, o site já está no ar e só este passo falha, bem visível.
+      - name: Publica as regras do Firestore
+        run: |
+          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KOMBOZABAR_1AA4A }}' > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx --yes firebase-tools@latest deploy --only firestore:rules \
+            --project kombozabar-1aa4a --non-interactive
+          rm -f "$RUNNER_TEMP/sa.json"

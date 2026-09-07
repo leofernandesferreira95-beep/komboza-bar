@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Só quem estiver logado E com um dos e-mails autorizados.
+    // Esta lista precisa bater com a constante US do sistema-komboza.html:
+    // adicionar alguém em um lugar sem adicionar no outro quebra o acesso.
+    function autorizado() {
+      return request.auth != null
+        && request.auth.token.email in [
+          'barkomboza@gmail.com'
+        ];
+    }
+
+    // Dados do sistema: um documento por chave (lancamentos, shows, comps...).
+    // A escrita só aceita o formato exato usado pelo app ({data, ts}), então
+    // uma credencial vazada não consegue gravar lixo em outro formato.
+    match /appData/{chave} {
+      allow read: if autorizado();
+      allow write: if autorizado()
+        && request.resource.data.keys().hasOnly(['data', 'ts']);
+    }
+
+    // Cópias automáticas diárias, gravadas pelo próprio app (30 dias).
+    match /backups/{dia} {
+      allow read, delete: if autorizado();
+      allow create, update: if autorizado()
+        && request.resource.data.keys().hasOnly(['data', 'por', 'ts', 'dados']);
+    }
+
+    // Qualquer outra coleção: negada. Não existe nada além disso no sistema.
+  }
+}

@@ -10,6 +10,13 @@ firebase-debug.*.log*
 # Firebase cache
 .firebase/
 
+# public/sistema/index.html é gerado a partir de sistema-komboza.html
+# (o workflow de deploy copia na hora do build) — não é fonte de verdade
+public/sistema/
+
+# Material de referência que não pode ir pro ar (fica fora da pasta publicada)
+public/referencia_sistema/
+
 # Firebase config
 
 # Uncomment this if you'd like others to create their own Firebase project.
