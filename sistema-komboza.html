@@ -393,6 +393,16 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
   </div>
 </div>
 
+<div class="moverlay hidden" id="m-dia">
+  <div class="modal" style="max-width:480px">
+    <div class="mhead"><h2 id="dia-titulo">Dia</h2><button class="mclose" data-close="m-dia">✕</button></div>
+    <div class="mbody" id="dia-body"></div>
+    <div class="mfoot">
+      <button class="btn btn-s" data-close="m-dia">Fechar</button>
+    </div>
+  </div>
+</div>
+
 <div class="moverlay hidden" id="m-excat">
   <div class="modal" style="max-width:460px">
     <div class="mhead"><h2 id="excat-titulo">Excluir categoria</h2><button class="mclose" data-close="m-excat">✕</button></div>
@@ -2042,8 +2052,6 @@ function renderAgenda(){
     cells+=`<div class="ag-cell ${iso===hoje?'today':''}" data-dia="${iso}"><div class="ag-daynum">${d}</div>${html}</div>`;
   }
 
-  const futuros=evs.filter(e=>e.data>=hoje).sort((a,b)=>(a.data+(a.hora||'')).localeCompare(b.data+(b.hora||''))).slice(0,8);
-
   $('main').innerHTML=`
     <div class="ph">
       <div><h1>Agenda</h1><p>Shows, compromissos e vencimentos no mesmo calendário</p></div>
@@ -2052,32 +2060,22 @@ function renderAgenda(){
         <button class="btn btn-p" id="btn-novo-show">🎸 Novo show</button>
       </div>
     </div>
-    <div class="mstack" style="grid-template-columns:1fr 290px">
-      <div class="card">
-        <div class="flex justify-between items-center" style="margin-bottom:14px">
-          <button class="btn btn-s btn-sm" id="ag-ant">←</button>
-          <strong style="font-family:'Oswald',sans-serif;font-size:15px">${esc(nomeMes(APP.agendaMes))}</strong>
-          <button class="btn btn-s btn-sm" id="ag-prox">→</button>
-        </div>
-        <div class="ag-grid">${dows.map(d=>`<div class="ag-dow">${d}</div>`).join('')}</div>
-        <div class="ag-grid" style="margin-top:6px">${cells}</div>
-        <div class="flex gap8" style="margin-top:12px;flex-wrap:wrap">
-          ${Object.keys(AG_CORES).map(k=>{
-            const on=agendaFiltros()[k];
-            return `<span class="ag-filtro" data-filtro="${k}" style="opacity:${on?1:.4}">
-              <span class="dot" style="background:${AG_CORES[k]}"></span>${AG_ROTULOS[k]}</span>`;
-          }).join('')}
-        </div>
-        <div class="text-sm" style="color:var(--text-3);margin-top:8px;font-size:11px">Clique numa etiqueta para mostrar ou ocultar. Clique num dia para marcar um compromisso.</div>
+    <div class="card">
+      <div class="flex justify-between items-center" style="margin-bottom:14px">
+        <button class="btn btn-s btn-sm" id="ag-ant">←</button>
+        <strong style="font-family:'Oswald',sans-serif;font-size:15px">${esc(nomeMes(APP.agendaMes))}</strong>
+        <button class="btn btn-s btn-sm" id="ag-prox">→</button>
       </div>
-      <div class="card">
-        <div class="ctitle">Próximos</div>
-        ${futuros.length?futuros.map(e=>`
-          <div style="padding:8px 0;border-bottom:1px solid var(--border)">
-            <div style="font-size:11px;color:var(--text-3)">${esc(new Date(e.data+'T12:00:00').toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'}))}${e.hora?' · '+esc(e.hora):''}</div>
-            <div style="font-size:12.5px"><span style="color:${e.cor}">●</span> ${esc(e.titulo)}</div>
-          </div>`).join(''):'<div class="vazio">Nada nos próximos dias.</div>'}
+      <div class="ag-grid">${dows.map(d=>`<div class="ag-dow">${d}</div>`).join('')}</div>
+      <div class="ag-grid" style="margin-top:6px">${cells}</div>
+      <div class="flex gap8" style="margin-top:12px;flex-wrap:wrap">
+        ${Object.keys(AG_CORES).map(k=>{
+          const on=agendaFiltros()[k];
+          return `<span class="ag-filtro" data-filtro="${k}" style="opacity:${on?1:.4}">
+            <span class="dot" style="background:${AG_CORES[k]}"></span>${AG_ROTULOS[k]}</span>`;
+        }).join('')}
       </div>
+      <div class="text-sm" style="color:var(--text-3);margin-top:8px;font-size:11px">Clique numa etiqueta para mostrar ou ocultar. Clique num dia para ver o que tem nele.</div>
     </div>`;
 
   $('ag-ant').addEventListener('click',()=>{APP.agendaMes=somaMes(APP.agendaMes,-1);renderAgenda();});
@@ -2087,7 +2085,57 @@ function renderAgenda(){
   $('main').querySelectorAll('[data-filtro]').forEach(el=>el.addEventListener('click',()=>{
     const f=agendaFiltros();f[el.dataset.filtro]=!f[el.dataset.filtro];renderAgenda();
   }));
-  $('main').querySelectorAll('[data-dia]').forEach(el=>el.addEventListener('click',()=>abrirComp(null,el.dataset.dia)));
+  $('main').querySelectorAll('[data-dia]').forEach(el=>el.addEventListener('click',()=>abrirDia(el.dataset.dia)));
+}
+
+// ── O que tem em um dia ──
+// Clicar no dia mostra o conteúdo dele aqui mesmo, só para consulta. Criar
+// compromisso é pelo botão do topo, para o clique no calendário não abrir
+// formulário sem querer.
+function abrirDia(iso){
+  const f=agendaFiltros();
+  const shows=getShows().filter(s=>s.data===iso);
+  const comps=getComps().filter(c=>(c.inicio||'').slice(0,10)===iso);
+  const venc=getLanc().filter(l=>!l.pago&&l.vencimento===iso);
+
+  // Respeita as etiquetas do calendário, senão o dia mostraria algo que a
+  // grade está escondendo
+  const vShows=f.show?shows:[], vComps=f.comp?comps:[];
+  const vVenc=venc.filter(l=>l.tipo==='pagar'?f.pagar:f.receber);
+  const ocultos=(shows.length-vShows.length)+(comps.length-vComps.length)+(venc.length-vVenc.length);
+
+  // Só a primeira letra em maiúscula: capitalize no CSS viraria "Sexta-Feira, 11 De Setembro"
+  const rotulo=new Date(iso+'T12:00:00').toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'});
+  $('dia-titulo').textContent=rotulo.charAt(0).toUpperCase()+rotulo.slice(1);
+
+  const linha=(cor,titulo,detalhe,valor)=>`
+    <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border)">
+      <span style="flex-shrink:0;width:9px;height:9px;border-radius:2px;background:${cor};margin-top:5px"></span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;font-weight:600">${esc(titulo)}</div>
+        ${detalhe?`<div class="text-sm text-muted">${esc(detalhe)}</div>`:''}
+      </div>
+      ${valor?`<div class="fw6 num" style="white-space:nowrap">${valor}</div>`:''}
+    </div>`;
+
+  const grupo=(rotulo,itens)=>itens.length?`<div class="ctitle" style="margin:16px 0 2px">${rotulo}</div>${itens.join('')}`:'';
+
+  const blocos=[
+    grupo('Shows', vShows.map(s=>linha(AG_CORES.show,'🎸 '+s.banda,
+      [s.hora?'Às '+s.hora:'',s.obs||''].filter(Boolean).join(' · '),
+      s.cache>0?`<span class="valor-pag">${esc(fBRL(s.cache))}</span>`:''))),
+    grupo('Compromissos', vComps.map(c=>linha(AG_CORES.comp,c.titulo||'Compromisso',
+      [c.inicio?c.inicio.slice(11,16)+(c.fim?' às '+c.fim.slice(11,16):''):'',c.local||'',c.descricao||''].filter(Boolean).join(' · '),''))),
+    grupo('Vencimentos', vVenc.map(l=>linha(AG_CORES[l.tipo],
+      (l.tipo==='receber'?'A receber: ':'A pagar: ')+l.descricao,
+      l.categoria||'',
+      `<span class="${l.tipo==='receber'?'valor-rec':'valor-pag'}">${esc(fBRL(l.valor))}</span>`)))
+  ].filter(Boolean).join('');
+
+  $('dia-body').innerHTML = blocos
+    ? blocos + (ocultos?`<div class="text-sm" style="color:var(--amber);margin-top:12px">${ocultos} item(ns) escondido(s) pelas etiquetas do calendário.</div>`:'')
+    : `<div class="vazio">Nada marcado neste dia.${ocultos?`<br><span style="color:var(--amber)">${ocultos} item(ns) escondido(s) pelas etiquetas.</span>`:''}</div>`;
+  openM('m-dia');
 }
 
 // ── Compromissos avulsos ──
