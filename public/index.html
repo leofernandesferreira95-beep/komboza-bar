@@ -27,7 +27,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Oswald:wght@500;600;700&family=Barlow+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
 <!-- DADOS ESTRUTURADOS — domínio oficial: kombozabar.com.br -->
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"BarOrPub","name":"Komboza Bar","image":"https://kombozabar.com.br/assets/logo_glow.png","url":"https://kombozabar.com.br/","telephone":"+5531998864613","priceRange":"$$","address":{"@type":"PostalAddress","streetAddress":"Rua José da Silva Fernandes, 24 - Lourdes","addressLocality":"Brumadinho","addressRegion":"MG","addressCountry":"BR"},"openingHoursSpecification":[{"@type":"OpeningHoursSpecification","dayOfWeek":["Wednesday","Thursday"],"opens":"17:00","closes":"00:00"},{"@type":"OpeningHoursSpecification","dayOfWeek":["Friday","Saturday"],"opens":"17:00","closes":"02:00"},{"@type":"OpeningHoursSpecification","dayOfWeek":"Sunday","opens":"17:00","closes":"00:00"}],"aggregateRating":{"@type":"AggregateRating","ratingValue":"5.0","reviewCount":"15"},"sameAs":["https://instagram.com/komboza.bar"]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"BarOrPub","name":"Komboza Bar","image":"https://kombozabar.com.br/assets/logo_glow.png","url":"https://kombozabar.com.br/","telephone":"+5531998864613","priceRange":"$$","address":{"@type":"PostalAddress","streetAddress":"Rua José da Silva Fernandes, 24 - Lourdes","addressLocality":"Brumadinho","addressRegion":"MG","addressCountry":"BR"},"openingHoursSpecification":[{"@type":"OpeningHoursSpecification","dayOfWeek":["Wednesday","Thursday"],"opens":"17:00","closes":"00:00"},{"@type":"OpeningHoursSpecification","dayOfWeek":["Friday","Saturday"],"opens":"17:00","closes":"02:00"},{"@type":"OpeningHoursSpecification","dayOfWeek":"Sunday","opens":"17:00","closes":"00:00"}],"aggregateRating":{"@type":"AggregateRating","ratingValue":"5.0","reviewCount":"23"},"hasMap":"https://www.google.com/maps/search/?api=1&query=Komboza+Bar&query_place_id=ChIJAz4KcgDNpgARTkLklxyKqYs","sameAs":["https://instagram.com/komboza.bar"]}</script>
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Precisa reservar mesa?","acceptedAnswer":{"@type":"Answer","text":"Não é obrigatório, mas em noite de show especial vale reservar pelo WhatsApp pra garantir lugar."}},{"@type":"Question","name":"Tem estacionamento?","acceptedAnswer":{"@type":"Answer","text":"Não temos estacionamento próprio. A região da Praça Central tem vaga de rua."}},{"@type":"Question","name":"Quais formas de pagamento vocês aceitam?","acceptedAnswer":{"@type":"Answer","text":"Cartão, Pix, dinheiro e cartão CDL Brumadinho (vale-alimentação da prefeitura)."}},{"@type":"Question","name":"Pode levar criança ou pet?","acceptedAnswer":{"@type":"Answer","text":"Sim, o ambiente é aberto pra todo mundo, sem restrição formal."}},{"@type":"Question","name":"Tem música ao vivo toda semana?","acceptedAnswer":{"@type":"Answer","text":"Sim. A programação muda toda semana, confira a seção de programação da página."}},{"@type":"Question","name":"Qual o melhor dia pra ir?","acceptedAnswer":{"@type":"Answer","text":"Quarta é a Quarta Pesada, com promoção fixa. Quinta tem Komboza Ao Vivo. Sexta costuma ter show especial. Sábado e domingo o bar abre normal."}}]}</script>
 <style>
 
@@ -66,6 +66,9 @@
 }
 .show-artist{
   width:min(85vw,440px);
+  /* height:auto é obrigatório: o atributo height do <img> vale como estilo e,
+     sem isso, a foto estica na vertical no celular. */
+  height:auto;
   filter:drop-shadow(-8px 0 40px rgba(139,0,0,.7));
   opacity:0;
   transform:translateX(40px);
@@ -484,7 +487,7 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
           <span class="pin">●</span> Rua José da Silva Fernandes, 24 — Lourdes<br>
           Em frente à Praça Central de Brumadinho/MG
         </p>
-        <a class="btn-maps" href="https://www.google.com/maps/search/?api=1&query=Rua+Jos%C3%A9+da+Silva+Fernandes+24+Brumadinho+MG" target="_blank" rel="noopener">
+        <a class="btn-maps" href="https://www.google.com/maps/search/?api=1&amp;query=Komboza+Bar&amp;query_place_id=ChIJAz4KcgDNpgARTkLklxyKqYs" target="_blank" rel="noopener">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
           Abrir no Google Maps
         </a>
@@ -625,7 +628,7 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.16c3.2 0 3.58.01 4.85.07 1.17.05 1.8.25 2.23.41.56.22.96.48 1.38.9.42.42.68.82.9 1.38.16.42.36 1.06.41 2.23.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.05 1.17-.25 1.8-.41 2.23-.22.56-.48.96-.9 1.38-.42.42-.82.68-1.38.9-.42.16-1.06.36-2.23.41-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-1.17-.05-1.8-.25-2.23-.41a3.7 3.7 0 01-1.38-.9 3.7 3.7 0 01-.9-1.38c-.16-.42-.36-1.06-.41-2.23C2.17 15.58 2.16 15.2 2.16 12s.01-3.58.07-4.85c.05-1.17.25-1.8.41-2.23.22-.56.48-.96.9-1.38.42-.42.82-.68 1.38-.9.42-.16 1.06-.36 2.23-.41C8.42 2.17 8.8 2.16 12 2.16zm0 3.24A6.6 6.6 0 1018.6 12 6.6 6.6 0 0012 5.4zm0 10.89A4.29 4.29 0 1116.29 12 4.29 4.29 0 0112 16.29zm6.85-11.15a1.54 1.54 0 11-1.54-1.54 1.54 1.54 0 011.54 1.54z"/></svg>
       @komboza.bar
     </a>
-    <a class="ig" href="https://www.google.com/maps/search/?api=1&query=Rua+Jos%C3%A9+da+Silva+Fernandes+24+Brumadinho+MG" target="_blank" rel="noopener">
+    <a class="ig" href="https://www.google.com/maps/search/?api=1&amp;query=Komboza+Bar&amp;query_place_id=ChIJAz4KcgDNpgARTkLklxyKqYs" target="_blank" rel="noopener">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 7v5l3 3"/></svg>
       Avaliações no Google
     </a>
