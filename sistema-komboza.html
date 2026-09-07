@@ -313,6 +313,7 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
       <button class="nitem" data-tela="fixas"><span class="ni">🔁</span>Contas fixas</button>
       <button class="nitem" data-tela="previsao"><span class="ni">🔮</span>Previsão de caixa</button>
       <button class="nitem" data-tela="categorias"><span class="ni">🏷</span>Categorias</button>
+      <button class="nitem" data-tela="importar"><span class="ni">📁</span>Importar planilha</button>
       <div class="nlbl">Agenda</div>
       <button class="nitem" data-tela="calendario"><span class="ni">📅</span>Calendário</button>
       <button class="nitem" data-tela="shows"><span class="ni">🎸</span>Shows</button>
@@ -388,6 +389,17 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
     <div class="mfoot">
       <button class="btn btn-s" data-close="m-fixa">Cancelar</button>
       <button class="btn btn-p" id="btn-salvar-fixa">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="moverlay hidden" id="m-excat">
+  <div class="modal" style="max-width:460px">
+    <div class="mhead"><h2 id="excat-titulo">Excluir categoria</h2><button class="mclose" data-close="m-excat">✕</button></div>
+    <div class="mbody" id="excat-body"></div>
+    <div class="mfoot">
+      <button class="btn btn-s" data-close="m-excat">Cancelar</button>
+      <button class="btn btn-d" id="excat-acao">Excluir</button>
     </div>
   </div>
 </div>
@@ -861,7 +873,7 @@ function voltarLoginUI(msg){
 const TELAS={
   painel:renderPainel,receber:()=>renderLista('receber'),pagar:()=>renderLista('pagar'),
   fixas:renderFixas,previsao:renderPrevisao,categorias:renderCategorias,
-  calendario:renderAgenda,shows:renderShows
+  importar:renderImportar,calendario:renderAgenda,shows:renderShows
 };
 
 function navTo(tela,silencioso){
@@ -1582,18 +1594,25 @@ function renderPrevisao(){
 // ═══════════════════════════════════════════════
 // CATEGORIAS
 // ═══════════════════════════════════════════════
+// Quantos lançamentos usam esta categoria — é o que decide se dá pra excluir
+// direto ou se é preciso mover os lançamentos antes.
+const lancsDaCategoria=nome=>getLanc().filter(l=>(l.categoria||'')===nome);
+
 function renderCategorias(){
   const c=getCats();
   const bloco=(chave,titulo,ajuda)=>`
     <div class="card" style="margin-bottom:14px">
       <div class="ctitle">${titulo}</div>
-      <div class="text-sm text-muted" style="margin:-8px 0 12px">${ajuda}</div>
+      <div class="text-sm text-muted" style="margin:-8px 0 12px">${esc(ajuda)}</div>
       <div id="cat-${chave}">
-        ${(c[chave]||[]).map((nome,i)=>`
-          <div class="flex gap8 items-center" style="margin-bottom:7px">
+        ${(c[chave]||[]).map((nome,i)=>{
+          const n=lancsDaCategoria(nome).length;
+          return `<div class="flex gap8 items-center" style="margin-bottom:7px">
             <input type="text" value="${esc(nome)}" data-cat="${chave}" data-i="${i}" style="flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:'Inter',sans-serif;outline:none">
-            <button class="btn btn-sm btn-d" data-rmcat="${chave}" data-i="${i}">✕</button>
-          </div>`).join('')}
+            <span class="text-sm" style="color:var(--text-3);min-width:74px;text-align:right">${n?n+(n>1?' lançam.':' lançam.'):'sem uso'}</span>
+            <button class="btn btn-sm btn-d" data-rmcat="${chave}" data-i="${i}" title="Excluir categoria">✕</button>
+          </div>`;
+        }).join('')}
       </div>
       <button class="btn btn-s btn-sm" data-addcat="${chave}" style="margin-top:6px">+ Adicionar</button>
     </div>`;
@@ -1601,29 +1620,376 @@ function renderCategorias(){
   $('main').innerHTML=`
     <div class="ph">
       <div><h1>Categorias</h1><p>Como o dinheiro é classificado nos relatórios</p></div>
-      <button class="btn btn-p" id="btn-salvar-cats">Salvar categorias</button>
+      <span class="text-sm text-muted">Salva sozinho a cada alteração</span>
     </div>
     ${bloco('rec','Entradas','O que traz dinheiro pro bar.')}
     ${bloco('var','Saídas variáveis','Mudam conforme o movimento: bebida, insumo, cachê.')}
     ${bloco('fix','Saídas fixas','Se repetem todo mês, com ou sem movimento.')}
-    <div class="text-sm text-muted">Renomear uma categoria não muda os lançamentos antigos, que continuam com o nome anterior.</div>`;
+    <div class="text-sm text-muted">Ao renomear, os lançamentos que usavam o nome antigo são atualizados junto, para nenhum valor ficar solto fora dos relatórios.</div>`;
 
   const lerBloco=chave=>Array.from(document.querySelectorAll(`[data-cat="${chave}"]`)).map(i=>i.value.trim()).filter(Boolean);
+
+  // Salva a cada alteração, sem depender de botão. Renomear também corrige os
+  // lançamentos antigos: sem isso o valor sumiria do relatório por categoria.
+  function salvarCategorias(){
+    const antes=getCats();
+    const depois={rec:lerBloco('rec'),var:lerBloco('var'),fix:lerBloco('fix')};
+    if(!depois.rec.length||!depois.var.length){
+      toast('Deixe pelo menos uma categoria de entrada e uma de saída.',true);
+      renderCategorias();return;
+    }
+    let renomeados=0;
+    const lancs=getLanc();
+    ['rec','var','fix'].forEach(k=>{
+      const a=antes[k]||[], d=depois[k]||[];
+      if(a.length!==d.length)return;              // adição/remoção não é renomeação
+      a.forEach((velho,i)=>{
+        const novo=d[i];
+        if(velho===novo||!novo)return;
+        lancs.forEach(l=>{
+          if((l.categoria||'')===velho){l.categoria=novo;l.atualizadoEm=agora();renomeados++;}
+        });
+      });
+    });
+    if(renomeados)setLanc(lancs);
+    setCats(depois);reloadCats();
+    toast(renomeados?`Categoria salva. ${renomeados} lançamento(s) atualizado(s).`:'Categoria salva.');
+  }
+
+  $('main').querySelectorAll('[data-cat]').forEach(inp=>{
+    inp.addEventListener('change',()=>{salvarCategorias();renderCategorias();});
+  });
   $('main').querySelectorAll('[data-addcat]').forEach(b=>b.addEventListener('click',()=>{
     const k=b.dataset.addcat,atual=getCats();
     atual[k]=[...lerBloco(k),'Nova categoria'];
     setCats(atual);reloadCats();renderCategorias();
   }));
   $('main').querySelectorAll('[data-rmcat]').forEach(b=>b.addEventListener('click',()=>{
-    const k=b.dataset.rmcat,i=parseInt(b.dataset.i),atual=getCats();
-    const arr=lerBloco(k);arr.splice(i,1);atual[k]=arr;
-    setCats(atual);reloadCats();renderCategorias();
+    abrirExclusaoCategoria(b.dataset.rmcat, parseInt(b.dataset.i));
   }));
-  $('btn-salvar-cats').addEventListener('click',()=>{
-    const atual={rec:lerBloco('rec'),var:lerBloco('var'),fix:lerBloco('fix')};
-    if(!atual.rec.length||!atual.var.length){toast('Deixe pelo menos uma categoria de entrada e uma de saída.',true);return;}
-    setCats(atual);reloadCats();
-    toast('Categorias salvas.');
+}
+
+// ── Exclusão de categoria ──
+// Nunca some com lançamento: se a categoria estiver em uso, a saída padrão é
+// mover os registros para outra categoria antes de excluir.
+let excluirCat={grupo:null,indice:null,nome:''};
+function abrirExclusaoCategoria(grupo,indice){
+  const cats=getCats();
+  const nome=(cats[grupo]||[])[indice];
+  if(!nome)return;
+  const usados=lancsDaCategoria(nome);
+  excluirCat={grupo,indice,nome};
+
+  // Destinos possíveis: as outras categorias do mesmo lado (entrada ou saída)
+  const mesmoLado = grupo==='rec' ? (cats.rec||[]) : [...(cats.var||[]),...(cats.fix||[])];
+  const destinos = mesmoLado.filter(x=>x!==nome);
+
+  $('excat-titulo').textContent = usados.length ? 'Esta categoria está em uso' : 'Excluir categoria';
+  $('excat-body').innerHTML = usados.length ? `
+    <div class="resumo-box">
+      <div><strong>${esc(nome)}</strong></div>
+      <div class="val" style="color:var(--amber);font-size:17px">${usados.length} lançamento(s) usam ela</div>
+      <div class="text-sm text-muted">Somando ${esc(fBRL(usados.reduce((s,l)=>s+(l.valor||0),0)))}</div>
+    </div>
+    ${destinos.length?`
+      <div class="fgroup"><label>Mover os lançamentos para</label>
+        <select id="excat-destino">${destinos.map(d=>`<option>${esc(d)}</option>`).join('')}</select>
+      </div>
+      <div class="text-sm text-muted">Os lançamentos continuam existindo, só passam a contar na categoria escolhida.</div>`
+    :`<div class="text-sm" style="color:var(--amber)">Não há outra categoria do mesmo tipo para receber os lançamentos. Crie uma antes de excluir esta.</div>`}
+  ` : `
+    <div class="resumo-box">
+      <div><strong>${esc(nome)}</strong></div>
+      <div class="text-sm text-muted">Nenhum lançamento usa esta categoria.</div>
+    </div>
+    <div>Excluir esta categoria da lista?</div>`;
+
+  $('excat-acao').textContent = usados.length ? 'Mover e excluir' : 'Excluir';
+  $('excat-acao').classList.toggle('hidden', usados.length>0 && destinos.length===0);
+  openM('m-excat');
+}
+
+$('excat-acao').addEventListener('click',()=>{
+  const {grupo,indice,nome}=excluirCat;
+  const cats=getCats();
+  if(!nome||(cats[grupo]||[])[indice]!==nome){closeM('m-excat');return;}
+  const usados=lancsDaCategoria(nome);
+  if(usados.length){
+    const destino=$('excat-destino')?.value;
+    if(!destino){toast('Escolha a categoria de destino.',true);return;}
+    const lancs=getLanc();
+    lancs.forEach(l=>{
+      if((l.categoria||'')===nome){l.categoria=destino;l.atualizadoEm=agora();}
+    });
+    setLanc(lancs);
+    addHist(`Moveu ${usados.length} lançamento(s)`,`${nome} → ${destino}`);
+    toast(`${usados.length} lançamento(s) movidos para ${destino}.`);
+  }
+  cats[grupo].splice(indice,1);
+  setCats(cats);reloadCats();
+  addHist('Excluiu categoria',nome);
+  closeM('m-excat');
+  renderCategorias();
+});
+
+// ═══════════════════════════════════════════════
+// IMPORTAR PLANILHA
+// ═══════════════════════════════════════════════
+// Pensado para colar o extrato do banco: a planilha modelo usa ponto e vírgula
+// (padrão do Excel em português) e cabeçalho em português. A importação só
+// ACRESCENTA lançamentos, nunca substitui o que já existe.
+const COLUNAS_MODELO=['Data','Tipo','Descrição','Valor','Categoria','Forma','Pago'];
+
+function baixarModeloPlanilha(){
+  const ex=[
+    ['05/09/2026','Pagar','Distribuidora de bebida','1650,00','Bebidas / Estoque','Boleto','Nao'],
+    ['06/09/2026','Receber','Vendas do dia','3750,00','Vendas do dia','Dinheiro','Sim'],
+    ['10/09/2026','Pagar','Conta de energia','640,00','Energia','Boleto','Nao']
+  ];
+  const linhas=[COLUNAS_MODELO.join(';'), ...ex.map(l=>l.join(';'))];
+  // BOM na frente para o Excel abrir com acento correto
+  const blob=new Blob(['﻿'+linhas.join('\r\n')],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='modelo-lancamentos-komboza.csv';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+  toast('Planilha modelo baixada.');
+}
+
+function lerCSV(texto){
+  texto=texto.replace(/^﻿/,'');
+  const linhas=texto.split(/\r\n|\n|\r/).filter(l=>l.trim()!=='');
+  if(!linhas.length)return{cabecalho:[],dados:[]};
+  // Separador: o que mais divide a primeira linha (Excel BR usa ';')
+  const sep=[';','\t',','].reduce((a,b)=>linhas[0].split(b).length>linhas[0].split(a).length?b:a);
+  const parse=linha=>{
+    const out=[];let cur='',aspas=false;
+    for(let i=0;i<linha.length;i++){
+      const ch=linha[i];
+      if(aspas){
+        if(ch==='"'){ if(linha[i+1]==='"'){cur+='"';i++;} else aspas=false; }
+        else cur+=ch;
+      }else{
+        if(ch==='"')aspas=true;
+        else if(ch===sep){out.push(cur);cur='';}
+        else cur+=ch;
+      }
+    }
+    out.push(cur);
+    return out.map(x=>x.trim());
+  };
+  return{cabecalho:parse(linhas[0]),dados:linhas.slice(1).map(parse)};
+}
+
+const chaveCol=s=>semAcento(s).replace(/[^a-z0-9]/g,'');
+const ALIAS_COL={
+  data:['data','vencimento','datavencimento','datadolancamento','dt'],
+  tipo:['tipo','operacao','movimento','natureza'],
+  descricao:['descricao','historico','detalhe','lancamento','identificacao'],
+  valor:['valor','vlr','montante','quantia'],
+  categoria:['categoria','cat','classificacao'],
+  forma:['forma','formapagamento','formadepagamento','pagamento','meio'],
+  pago:['pago','quitado','baixado','status','situacao']
+};
+
+function lerValorBR(s){
+  let t=String(s??'').replace(/r\$/gi,'').replace(/\s/g,'').trim();
+  if(!t)return NaN;
+  const negativo=/^-/.test(t)||/^\(.*\)$/.test(t);
+  t=t.replace(/[()]/g,'').replace(/^[-+]/,'');
+  if(t.includes(','))t=t.replace(/\./g,'').replace(',','.');
+  const n=parseFloat(t);
+  if(isNaN(n))return NaN;
+  return negativo?-n:n;
+}
+
+function lerDataBR(s){
+  const t=String(s??'').trim();
+  let m=t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if(m){let[,d,mo,y]=m;if(y.length===2)y='20'+y;
+    return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;}
+  m=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if(m){const[,y,mo,d]=m;return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;}
+  return null;
+}
+
+let linhasImport=[];
+
+function analisarPlanilha(texto){
+  const {cabecalho,dados}=lerCSV(texto);
+  if(!cabecalho.length)return{erroGeral:'Arquivo vazio.'};
+  const idx={};
+  cabecalho.forEach((h,i)=>{
+    const k=chaveCol(h);
+    for(const campo in ALIAS_COL){ if(ALIAS_COL[campo].includes(k)&&idx[campo]===undefined)idx[campo]=i; }
+  });
+  if(idx.data===undefined||idx.valor===undefined)
+    return{erroGeral:'A planilha precisa ter pelo menos as colunas Data e Valor. Baixe o modelo e use o mesmo cabeçalho.'};
+
+  const existentes=getLanc();
+  const catsConhecidas=new Set([...CAT_REC,...CAT_PAG]);
+  const pega=(l,c)=>idx[c]!==undefined?(l[idx[c]]??''):'';
+
+  return{linhas:dados.map((l,n)=>{
+    const bruto={
+      data:pega(l,'data'),tipo:pega(l,'tipo'),descricao:pega(l,'descricao'),
+      valor:pega(l,'valor'),categoria:pega(l,'categoria'),forma:pega(l,'forma'),pago:pega(l,'pago')
+    };
+    const erros=[],avisos=[];
+    const venc=lerDataBR(bruto.data);
+    if(!venc)erros.push('data inválida');
+    let valor=lerValorBR(bruto.valor);
+    if(isNaN(valor)||valor===0)erros.push('valor inválido');
+
+    // Tipo: pela coluna quando existe; senão pelo sinal, que é como vem o extrato
+    let tipo=null;
+    const t=semAcento(bruto.tipo);
+    if(/receb|receit|entrad|credit/.test(t))tipo='receber';
+    else if(/pag|desp|said|debit/.test(t))tipo='pagar';
+    else if(!isNaN(valor))tipo=valor<0?'pagar':'receber';
+    if(!isNaN(valor))valor=Math.abs(valor);
+
+    const descricao=bruto.descricao||'(sem descrição)';
+    if(!bruto.descricao)avisos.push('sem descrição');
+
+    const categoria=bruto.categoria||'';
+    if(categoria&&!catsConhecidas.has(categoria))avisos.push('categoria nova');
+
+    const p=semAcento(bruto.pago);
+    const pago=/^(sim|s|x|true|1|pago|quitado|baixado)$/.test(p);
+
+    const dup=venc&&!isNaN(valor)&&existentes.some(e=>
+      e.vencimento===venc&&Math.abs((e.valor||0)-valor)<0.005&&
+      semAcento(e.descricao||'')===semAcento(descricao));
+    if(dup)avisos.push('já existe no sistema');
+
+    return{n:n+2,venc,tipo,descricao,valor,categoria,forma:bruto.forma||'',pago,erros,avisos,dup};
+  })};
+}
+
+// Marca linhas repetidas DENTRO do próprio arquivo. Colar extrato costuma
+// duplicar linha sem querer, e sem isso o valor entraria duas vezes.
+function marcarRepetidasNoArquivo(linhas){
+  const vistas=new Set();
+  linhas.forEach(l=>{
+    if(l.erros.length)return;
+    const chave=`${l.venc}|${l.valor.toFixed(2)}|${semAcento(l.descricao)}`;
+    if(vistas.has(chave)){l.dup=true;l.avisos.push('repetida nesta planilha');}
+    else vistas.add(chave);
+  });
+  return linhas;
+}
+
+function renderImportar(){
+  $('main').innerHTML=`
+    <div class="ph">
+      <div><h1>Importar planilha</h1><p>Lançar vários de uma vez, direto do extrato do banco</p></div>
+      <button class="btn btn-s" id="btn-modelo">⬇ Baixar planilha modelo</button>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Como funciona</div>
+      <ol style="margin:0 0 0 18px;font-size:13px;line-height:1.9;color:var(--text-2)">
+        <li>Baixe a planilha modelo e abra no Excel.</li>
+        <li>Cole os lançamentos do extrato, uma linha por lançamento.</li>
+        <li>Salve como <strong>CSV</strong> e escolha o arquivo aqui embaixo.</li>
+        <li>Confira a prévia e confirme. <strong>A importação só soma</strong> — nada do que já existe é apagado.</li>
+      </ol>
+      <div class="text-sm text-muted" style="margin-top:12px">
+        Colunas: ${COLUNAS_MODELO.join(' · ')}. Só <strong>Data</strong> e <strong>Valor</strong> são obrigatórias.
+        Sem a coluna Tipo, valor negativo vira saída e positivo vira entrada, que é como o extrato costuma vir.
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Escolher arquivo</div>
+      <input type="file" id="imp-arquivo" accept=".csv,.txt,text/csv" style="width:100%;padding:10px;border:1.5px dashed var(--border);border-radius:8px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:'Inter',sans-serif;cursor:pointer">
+    </div>
+    <div id="imp-previa"></div>`;
+  $('btn-modelo').addEventListener('click',baixarModeloPlanilha);
+  $('imp-arquivo').addEventListener('change',e=>{
+    const f=e.target.files&&e.target.files[0];
+    if(!f)return;
+    const fr=new FileReader();
+    fr.onload=()=>{
+      let txt=String(fr.result||'');
+      // Excel costuma salvar CSV em ANSI; se vier caractere quebrado, relê nessa codificação
+      if(txt.includes('�')){
+        const fr2=new FileReader();
+        fr2.onload=()=>mostrarPreviaImport(String(fr2.result||''));
+        fr2.readAsText(f,'ISO-8859-1');
+        return;
+      }
+      mostrarPreviaImport(txt);
+    };
+    fr.readAsText(f,'UTF-8');
+  });
+}
+
+function mostrarPreviaImport(texto){
+  const r=analisarPlanilha(texto);
+  const box=$('imp-previa');
+  if(r.erroGeral){box.innerHTML=`<div class="card"><div class="vazio" style="color:var(--erro)">${esc(r.erroGeral)}</div></div>`;return;}
+  linhasImport=marcarRepetidasNoArquivo(r.linhas);
+  const validas=linhasImport.filter(l=>!l.erros.length);
+  const comErro=linhasImport.filter(l=>l.erros.length);
+  const dups=validas.filter(l=>l.dup).length;
+
+  box.innerHTML=`
+    <div class="card">
+      <div class="ctitle">Conferência</div>
+      <div class="fin-kgrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+        <div class="kcard"><div class="kval valor-pos num">${validas.length-dups}</div><div class="klbl">Selecionados para importar</div></div>
+        <div class="kcard"><div class="kval num" style="color:var(--amber)">${dups}</div><div class="klbl">Parecem repetidos</div></div>
+        <div class="kcard"><div class="kval valor-neg num">${comErro.length}</div><div class="klbl">Com erro (serão ignorados)</div></div>
+      </div>
+      ${dups?`<div class="text-sm" style="color:var(--amber);margin-bottom:10px">Alguns lançamentos já existem com a mesma data, valor e descrição. Desmarque se não quiser repetir.</div>`:''}
+      <div class="twrap" style="max-height:420px;overflow-y:auto">
+        <table>
+          <thead><tr><th></th><th>Linha</th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th><th>Situação</th></tr></thead>
+          <tbody>${linhasImport.map((l,i)=>`
+            <tr>
+              <td>${l.erros.length?'':`<input type="checkbox" class="imp-ck" data-i="${i}" ${l.dup?'':'checked'} style="width:15px;height:15px;accent-color:var(--accent)">`}</td>
+              <td class="num">${l.n}</td>
+              <td class="num">${l.venc?esc(fmtData(l.venc)):'—'}</td>
+              <td>${l.tipo?`<span class="bdg ${l.tipo==='receber'?'bv':'bvm'}">${l.tipo==='receber'?'Entrada':'Saída'}</span>`:'—'}</td>
+              <td>${esc(l.descricao)}</td>
+              <td>${esc(l.categoria)||'—'}</td>
+              <td class="num fw6 ${l.tipo==='receber'?'valor-rec':'valor-pag'}" style="text-align:right">${isNaN(l.valor)?'—':esc(fBRL(l.valor))}</td>
+              <td class="text-sm">${l.erros.length
+                ?`<span style="color:var(--erro)">${esc(l.erros.join(', '))}</span>`
+                :(l.avisos.length?`<span style="color:var(--amber)">${esc(l.avisos.join(', '))}</span>`:'<span style="color:var(--ok)">ok</span>')}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      <div class="flex gap8" style="margin-top:16px;flex-wrap:wrap">
+        <button class="btn btn-p" id="btn-importar">Importar selecionados</button>
+        <button class="btn btn-s" id="btn-marcar-todos">Marcar todos</button>
+        <button class="btn btn-s" id="btn-desmarcar">Desmarcar todos</button>
+      </div>
+    </div>`;
+
+  const cks=()=>Array.from(box.querySelectorAll('.imp-ck'));
+  $('btn-marcar-todos').addEventListener('click',()=>cks().forEach(c=>c.checked=true));
+  $('btn-desmarcar').addEventListener('click',()=>cks().forEach(c=>c.checked=false));
+  $('btn-importar').addEventListener('click',()=>{
+    const escolhidas=cks().filter(c=>c.checked).map(c=>linhasImport[parseInt(c.dataset.i)]);
+    if(!escolhidas.length){toast('Nenhuma linha selecionada.',true);return;}
+    if(!confirm(`Importar ${escolhidas.length} lançamento(s)?\n\nNada do que já está no sistema será alterado.`))return;
+    const lancs=getLanc();
+    escolhidas.forEach(l=>{
+      lancs.push({
+        id:uid('l'),tipo:l.tipo||'pagar',valor:l.valor,descricao:l.descricao,
+        categoria:l.categoria,forma:l.forma,vencimento:l.venc,
+        totalParcelas:1,parcelaAtual:1,grupoId:null,
+        pago:l.pago,dataPagamento:l.pago?l.venc:null,
+        cliente:'',showId:null,obs:'Importado de planilha',origem:'planilha',
+        criadoEm:agora(),atualizadoEm:agora()
+      });
+    });
+    setLanc(lancs);
+    addHist('Importou planilha',`${escolhidas.length} lançamento(s)`);
+    toast(`${escolhidas.length} lançamento(s) importados.`);
+    navTo('painel');
   });
 }
 
