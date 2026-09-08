@@ -451,7 +451,7 @@ db.enablePersistence({synchronizeTabs:true}).catch(e=>{
 });
 
 // Chaves que sincronizam com a nuvem. Chave nova só sincroniza se entrar aqui.
-const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','falhasStone','hist'];
+const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','regrasOfx','falhasStone','ofxIgnorados','hist'];
 const fsSyncQ={};
 
 // ═══════════════════════════════════════════════
@@ -815,7 +815,7 @@ function garantirCategorias(){
   const c=getCats();let mudou=false;
   const existe=n=>(c.rec||[]).includes(n)||(c.var||[]).includes(n)||(c.fix||[]).includes(n);
   if(!existe(CAT_FATURAMENTO)){c.rec=[CAT_FATURAMENTO,...(c.rec||[])];mudou=true;}
-  [CAT_TAXA,CAT_INSUMOS,CAT_PESSOAL,CAT_TRANSFER].forEach(n=>{
+  [CAT_TAXA,CAT_INSUMOS,CAT_PESSOAL,CAT_TRANSFER,...CATS_CUSTO].forEach(n=>{
     if(!existe(n)){c.var=[...(c.var||[]),n];mudou=true;}
   });
   if(mudou){setCats(c);reloadCats();}
@@ -2090,11 +2090,13 @@ function marcarRepetidasNoArquivo(linhas){
 let fonteImport='stone';
 function renderImportar(){
   if(fonteImport==='stone')return renderImportarStone();
+  if(fonteImport==='ofx')return renderImportarOfx();
   return renderImportarPlanilha();
 }
 const abasImport=()=>`
   <div class="tabs">
     <button class="tabbtn ${fonteImport==='stone'?'active':''}" data-fonte="stone">Extrato Stone</button>
+    <button class="tabbtn ${fonteImport==='ofx'?'active':''}" data-fonte="ofx">Extrato Sicredi</button>
     <button class="tabbtn ${fonteImport==='planilha'?'active':''}" data-fonte="planilha">Planilha modelo</button>
   </div>`;
 function ligarAbasImport(){
@@ -2366,6 +2368,361 @@ function previaStone(texto){
     if(!confirm('Importar?\n\n'+resumo.join('\n')+'\n\nNada do que já está no sistema será alterado.'))return;
     const res=gravarStone(linhasStone);
     toast(`${res.vendas} venda(s) importadas.`+(res.estimado.criados?` Dinheiro estimado em ${res.dias} dia(s).`:''));
+    navTo('painel');
+  });
+}
+
+// ═══════════════════════════════════════════════
+// IMPORTAR EXTRATO DO SICREDI (OFX)
+// ═══════════════════════════════════════════════
+// Só as SAÍDAS viram lançamento. As entradas do Sicredi são, em quase toda
+// linha, o repasse da Stone: nos extratos de jun–ago os créditos "KOMBOZA BAR"
+// somam R$ 107.407,50 contra R$ 107.407,98 de venda bruta no Stone. Lançar as
+// duas coisas dobraria o faturamento inteiro.
+const CATS_CUSTO=['Prolabore (Jane)','Prolabore (Wanderley)','Prolabore (Leo)',
+  'Atração','Freelance','Salário','Custo dos Produtos','Descartáveis','Utensílios',
+  'Investimentos','FGTS','Gasolina','CDL Brumadinho','Abrasel','Juros bancários',
+  'Simples Nacional','Dedetização','Sistema Connectplug','Contabilidade','Água',
+  'Luz (casa)','Luz (bar)','Manutenção Equipamentos','Marketing','Internet'];
+
+// Normaliza para casar grafias diferentes do mesmo nome: o extrato traz
+// "IFOOD,COM AGENCIA" e "IFOOD COM AGENCIA", "LEONARDO FERNANDES" e "Leonardo
+// Fernandes". Sem isso cada variação viraria uma pendência nova.
+const normNome=s=>semAcento(s).replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+
+// Regras de classificação vindas da lista do Leo. Ficam como DADO, não como
+// código: a tela de Regras deixa editar, e o que ele responder numa pendência
+// entra aqui e vale para as próximas importações.
+const REGRAS_OFX_BASE=[
+  {m:'saque',acao:'ignorar'},{m:'adriana',acao:'ignorar'},{m:'vero s a',acao:'ignorar'},
+  {m:'elias leopoldino',acao:'ignorar'},{m:'camila de sales barbosa',acao:'ignorar'},
+  {m:'dep dinheiro atm',cat:CAT_TRANSFER,obs:'Depósito do caixa no banco'},
+  {m:'jane fernandes',cat:'Prolabore (Jane)'},{m:'joao alberto soares',cat:'Prolabore (Jane)'},
+  {m:'wanderley evangelista',cat:'Prolabore (Wanderley)'},{m:'wm empreendimentos',cat:'Prolabore (Wanderley)'},
+  {m:'racao',cat:'Prolabore (Wanderley)'},{m:'advogado',cat:'Prolabore (Wanderley)'},
+  {m:'ceopag',cat:'Prolabore (Leo)',obs:'Pedágio'},{m:'vivacai',cat:'Prolabore (Leo)'},
+  {m:'pagar me',cat:'Prolabore (Leo)'},{m:'uber',cat:'Prolabore (Leo)',obs:'Uber'},
+  {m:'ifood',cat:'Prolabore (Leo)',obs:'iFood'},{m:'99tec',cat:'Prolabore (Leo)',obs:'99'},
+  {m:'99 food',cat:'Prolabore (Leo)',obs:'99'},{m:'telefonica',cat:'Prolabore (Leo)',obs:'Vivo'},
+  {m:'leonardo fernandes',cat:'Prolabore (Leo)'},
+  {m:'dma distribuidora',cat:'Prolabore (Leo)',obs:'Compras BH EPA'},
+  {m:'correa goncalves',cat:'Prolabore (Leo)',obs:'Almoço'},
+  {m:'leonardo guimaraes',cat:'Prolabore (Leo)',obs:'Almoço'},
+  {m:'allegro raja',cat:'Prolabore (Leo)',obs:'Almoço'},{m:'dona faustina',cat:'Prolabore (Leo)',obs:'Almoço'},
+  {m:'churrascomania',cat:'Prolabore (Leo)',obs:'Almoço'},{m:'emporio raja',cat:'Prolabore (Leo)',obs:'Almoço'},
+  {m:'eli rodrigues',cat:'Prolabore (Leo)',obs:'Boteco'},
+  {m:'sacolao da economia',cat:'Prolabore (Leo)',obs:'Mercadinho'},
+  {m:'amarildo',cat:'Prolabore (Leo)'},{m:'valmir',cat:'Prolabore (Leo)'},
+  {m:'erivaldo',cat:'Prolabore (Leo)'},{m:'geovane',cat:'Prolabore (Leo)'},
+  {m:'paulo luciano',cat:'Prolabore (Leo)'},
+  {m:'rafael gomes',cat:'Prolabore (Leo)',obs:'Monjauro'},{m:'thaynan',cat:'Prolabore (Leo)',obs:'Monjauro'},
+  {m:'editora nacional',cat:'Prolabore (Leo)',obs:'Pós-graduação'},
+  {m:'cia da empada',cat:'Prolabore (Leo)'},{m:'jose carlos de melo',cat:'Prolabore (Leo)'},
+  {m:'ernando kaiky',cat:'Prolabore (Leo)'},{m:'marcos paulo pereira',cat:'Prolabore (Leo)'},
+  {m:'david oliveira rodrigues',cat:'Prolabore (Leo)'},
+  {m:'m4 produtos',cat:'Prolabore (Leo)'},{m:'spotpass',cat:'Prolabore (Leo)'},
+  {m:'google brasil',cat:'Prolabore (Leo)',obs:'Marketing Engenharia'},
+  {m:'wanderson dos santos',cat:'Prolabore (Leo)',obs:'Uber'},
+  {m:'bar e mercearia teixeira',cat:'Prolabore (Leo)'},{m:'toro beer',cat:'Prolabore (Leo)'},
+  {m:'drogaria',cat:'Prolabore (Leo)'},{m:'farma',cat:'Prolabore (Leo)'},
+  {m:'arte e sabor',cat:'Prolabore (Leo)'},{m:'crea',cat:'Prolabore (Leo)'},
+  {m:'casa empadas',cat:'Prolabore (Leo)'},{m:'espeteria',cat:'Prolabore (Leo)'},
+  {m:'premium park',cat:'Prolabore (Leo)'},{m:'diaslobo',cat:'Prolabore (Leo)'},
+  {m:'henrique simoes',cat:'Atração'},{m:'frederico righi',cat:'Atração',obs:'Fred Rock'},
+  {m:'raphael barbosa silva',cat:'Atração'},{m:'flavio cardoso de araujo',cat:'Atração',obs:'Evento CBJ'},
+  {m:'marcelo silveira neto',cat:'Atração',obs:'Banda Shello'},
+  {m:'vitor gabriel',cat:'Freelance'},{m:'andreia luiza silva faria',cat:'Freelance',obs:'Leandro'},
+  {m:'luana prado',cat:'Freelance'},{m:'leandro guilherme',cat:'Freelance'},
+  {m:'vitoria emanuele',cat:'Freelance'},
+  {m:'maria do socorro',cat:'Salário'},
+  {m:'rubens silvestre',cat:'Custo dos Produtos',obs:'Cigarro'},
+  {m:'bebidas brumadinho',cat:'Custo dos Produtos',obs:'Bebrum'},
+  {m:'comercial silva',cat:'Custo dos Produtos',obs:'Bhzão Atacado e Varejo'},
+  {m:'frigofama',cat:'Custo dos Produtos'},{m:'casa do baleiro',cat:'Custo dos Produtos'},
+  {m:'everton barbosa',cat:'Custo dos Produtos',obs:'Gelo saborizado'},
+  {m:'imperial importacao',cat:'Custo dos Produtos'},
+  {m:'willian roberto',cat:'Custo dos Produtos',obs:'Gelo'},{m:'phellipe',cat:'Custo dos Produtos',obs:'Gelo'},
+  {m:'maria lucia',cat:'Custo dos Produtos'},
+  {m:'plastil',cat:'Descartáveis'},{m:'caneta',cat:'Utensílios'},
+  {m:'almeida',cat:'Investimentos',obs:'Material de construção'},
+  {m:'leonardo bruno',cat:'Investimentos',obs:'Copiadora / cardápio'},
+  {m:'maciel tintas',cat:'Investimentos',obs:'Tinta metálica'},
+  {m:'vinicius cordeiro',cat:'Investimentos',obs:'Aluguel mesas'},
+  {m:'gustavo nogueira',cat:'Investimentos'},
+  {m:'ricardo fernandes peixoto',cat:'Investimentos',obs:'Telhado'},
+  {m:'mardem luiz ribeiro',cat:'Investimentos',obs:'Limpeza terreno'},
+  {m:'paraju',cat:'Investimentos'},{m:'casa agro campo',cat:'Investimentos'},
+  {m:'ana clara',cat:'Investimentos',obs:'Fotos dos pratos'},
+  {m:'cef matriz',cat:'FGTS'},
+  {m:'posto',cat:'Gasolina'},{m:'cdl',cat:'CDL Brumadinho'},{m:'abrasel',cat:'Abrasel'},
+  {m:'cesta de relacionamento',cat:'Juros bancários'},
+  {m:'sefaz',cat:'Simples Nacional'},{m:'das',cat:'Simples Nacional'},
+  {m:'ecoimune',cat:'Dedetização'},{m:'vindi',cat:'Sistema Connectplug'},
+  {m:'jr assessoria',cat:'Contabilidade'},{m:'copasa',cat:'Água'},
+  {m:'diego marques',cat:'Manutenção Equipamentos'},{m:'marcos garbin',cat:'Manutenção Equipamentos'},
+  // Sempre perguntar, mesmo tendo padrão
+  {m:'oesa',acao:'perguntar',cat:'Custo dos Produtos'},
+  {m:'imperial distribuidora',acao:'perguntar',cat:'Custo dos Produtos'},
+  {m:'super luna',acao:'perguntar',cat:'Custo dos Produtos'},
+  {m:'supermerc',acao:'perguntar',cat:'Custo dos Produtos'},
+  {m:'pix marketplace',acao:'perguntar',cat:'Custo dos Produtos'},
+  {m:'sacolao',acao:'perguntar',cat:'Custo dos Produtos'},
+  {m:'iasmin',acao:'perguntar',cat:'Prolabore (Leo)'},
+  {m:'silvania',acao:'perguntar'},{m:'caroline mota',acao:'perguntar'},
+  {m:'mauricio leite',acao:'perguntar',cat:'Atração',obs:'Maury Pop'}
+];
+const getRegrasOfx=()=>{const r=ls.g('regrasOfx',null);return Array.isArray(r)?r:REGRAS_OFX_BASE.slice();};
+const setRegrasOfx=r=>ls.s('regrasOfx',r);
+const getFitidsIgnorados=()=>ls.g('ofxIgnorados',[]);
+const setFitidsIgnorados=v=>ls.s('ofxIgnorados',v);
+
+// CEMIG é por faixa de valor, não por nome; NEXO racha 50/50; NIC.BR muda na
+// segunda ocorrência. Não cabem numa tabela de nome → categoria.
+function regraEspecial(nome,valor,ordem){
+  if(nome.includes('cemig')){
+    if(valor<=500)return{cat:'Prolabore (Wanderley)',obs:'CEMIG até R$ 500'};
+    if(valor<=1000)return{cat:'Luz (casa)',obs:'CEMIG entre R$ 500 e R$ 1.000'};
+    return{cat:'Luz (bar)',obs:'CEMIG acima de R$ 1.000'};
+  }
+  if(nome.includes('nexo'))return{cat:'Internet',obs:'Metade Internet, metade Prolabore (Jane)',rachar:true};
+  if(nome.includes('nic br')||nome.includes('nic.br'))
+    return ordem===0?{cat:'Prolabore (Leo)'}:{cat:'Marketing',obs:'Site'};
+  return null;
+}
+
+function classificarOfx(memo,valor,ordem){
+  const n=normNome(memo);
+  const esp=regraEspecial(n,Math.abs(valor),ordem);
+  if(esp)return{...esp,acao:'lancar'};
+  for(const r of getRegrasOfx()){
+    if(!r.m||!n.includes(normNome(r.m)))continue;
+    return{cat:r.cat||'',obs:r.obs||'',acao:r.acao||'lancar'};
+  }
+  return{cat:'',obs:'',acao:'perguntar'};
+}
+
+function lerOFX(texto){
+  const blocos=texto.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi)||[];
+  const campo=(b,k)=>{const m=b.match(new RegExp('<'+k+'>([^<\\r\\n]*)','i'));return m?m[1].trim():'';};
+  return blocos.map(b=>{
+    const d=campo(b,'DTPOSTED').slice(0,8);
+    return{
+      fitid:campo(b,'FITID'),
+      data:d.length===8?`${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`:null,
+      valor:parseFloat(campo(b,'TRNAMT'))||0,
+      memo:campo(b,'MEMO').replace(/\s{2,}/g,' ').trim(),
+      tipo:campo(b,'TRNTYPE')
+    };
+  }).filter(t=>t.fitid&&t.data);
+}
+
+function analisarOfx(texto){
+  const linhas=lerOFX(texto);
+  if(!linhas.length)return{erroGeral:'Nenhuma transação encontrada. O arquivo é mesmo um OFX do Sicredi?'};
+  const jaTem=new Set([...getLanc().filter(l=>l.fitid).map(l=>String(l.fitid)),
+                       ...getFitidsIgnorados().map(String)]);
+  const vistos=new Set();
+  let ordemNic=0;
+  const itens=linhas.map((t,i)=>{
+    const saida=t.valor<0;
+    let situacao='ok',c={cat:'',obs:'',acao:'lancar'};
+    if(jaTem.has(t.fitid)||vistos.has(t.fitid))situacao='repetido';
+    else if(!saida)situacao='entrada';           // não vira receita: seria contar duas vezes
+    else{
+      const n=normNome(t.memo);
+      c=classificarOfx(t.memo,t.valor,n.includes('nic br')?ordemNic++:0);
+      if(c.acao==='ignorar')situacao='ignorar';
+      else if(c.acao==='perguntar'||!c.cat)situacao='pendente';
+    }
+    vistos.add(t.fitid);
+    // Entrada de depósito em dinheiro é transferência, não faturamento
+    if(situacao==='entrada'&&normNome(t.memo).includes('dep dinheiro atm')){
+      situacao='transferencia';c={cat:CAT_TRANSFER,obs:'Depósito do caixa no banco',acao:'lancar'};
+    }
+    // "Sempre perguntar" continua perguntando nas próximas importações: virar
+    // regra fixa contrariaria a instrução. Só nome desconhecido gera regra nova.
+    return{...t,n:i+1,situacao,cat:c.cat,obs:c.obs,rachar:!!c.rachar,
+      perguntarSempre:c.acao==='perguntar',sugestao:c.cat||'',valorAbs:Math.abs(t.valor)};
+  });
+  const pend=[...new Set(itens.filter(x=>x.situacao==='pendente').map(x=>x.memo))];
+  return{itens,pendentes:pend};
+}
+
+function gravarOfx(itens){
+  garantirCategorias();
+  const lancs=getLanc();
+  const ignorados=getFitidsIgnorados();
+  let pagas=0,transf=0,puladas=0;
+  itens.forEach(x=>{
+    if(x.situacao==='ignorar'||x.situacao==='entrada'){ignorados.push(x.fitid);puladas++;return;}
+    if(x.situacao!=='ok'&&x.situacao!=='transferencia')return;
+    const comum={fitid:x.fitid,valorBruto:x.valorAbs,valorLiquido:x.valorAbs,
+      descricao:x.memo.slice(0,90),conta:'Sicredi',bandeira:'',dataVenda:null,
+      diaOperacional:x.data,vencimento:x.data,dataPagamento:x.data,dataRecebimento:x.data,
+      pago:true,qtdTransacoes:1,totalParcelas:1,parcelaAtual:1,grupoId:null,
+      cliente:'',showId:null,foraDaAnalise:false,forma:'',
+      origem:'OFX',criadoEm:agora(),atualizadoEm:agora()};
+    if(x.situacao==='transferencia'){
+      // Duas pernas: sai do caixa, entra no banco. Nenhuma mexe no resultado.
+      lancs.push({id:uid('l'),tipo:'pagar',valor:x.valorAbs,categoria:CAT_TRANSFER,
+        ...comum,conta:'Dinheiro',fitid:x.fitid+'_saida',obs:'Saída do caixa em espécie'});
+      lancs.push({id:uid('l'),tipo:'receber',valor:x.valorAbs,categoria:CAT_TRANSFER,
+        ...comum,obs:x.obs||'Entrada no Sicredi'});
+      transf++;return;
+    }
+    if(x.rachar){
+      const metade=Math.round(x.valorAbs/2*100)/100;
+      lancs.push({id:uid('l'),tipo:'pagar',valor:metade,categoria:'Internet',...comum,
+        valorBruto:metade,valorLiquido:metade,obs:'Metade Internet'});
+      lancs.push({id:uid('l'),tipo:'pagar',valor:x.valorAbs-metade,categoria:'Prolabore (Jane)',
+        ...comum,fitid:x.fitid+'_b',valorBruto:x.valorAbs-metade,valorLiquido:x.valorAbs-metade,
+        obs:'Metade Prolabore (Jane)'});
+      pagas++;return;
+    }
+    lancs.push({id:uid('l'),tipo:'pagar',valor:x.valorAbs,categoria:x.cat,...comum,obs:x.obs||''});
+    pagas++;
+  });
+  setFitidsIgnorados(ignorados);
+  setLanc(lancs);
+  addHist('Importou extrato Sicredi',`${pagas} pagamento(s)`);
+  return{pagas,transf,puladas};
+}
+
+// ── Tela: extrato do Sicredi ──
+let itensOfx=[],textoOfx='';
+function renderImportarOfx(){
+  $('main').innerHTML=`
+    <div class="ph"><div><h1>Importar</h1><p>Extrato do Sicredi (OFX) — contas a pagar</p></div></div>
+    ${abasImport()}
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Como funciona</div>
+      <div class="text-sm text-muted">
+        Baixe o extrato em <strong>OFX</strong> no app do Sicredi e escolha aqui. Cada saída é
+        classificada pelas regras de fornecedor. O que não bater com regra nenhuma
+        <strong>não é chutado</strong>: fica pendente e pergunta a você.
+      </div>
+      <div class="text-sm" style="margin-top:10px;color:var(--amber)">
+        As <strong>entradas</strong> não viram receita. Quase toda entrada do Sicredi é o repasse da
+        Stone, que já foi contado na importação do extrato de vendas — lançar de novo dobraria o
+        faturamento. Só depósito de dinheiro entra, como transferência entre contas.
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Escolher arquivo</div>
+      <input type="file" id="of-arquivo" accept=".ofx,.qfx,.txt" style="width:100%;padding:10px;border:1.5px dashed var(--border);border-radius:8px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:'Inter',sans-serif;cursor:pointer">
+    </div>
+    <div id="of-previa"></div>`;
+  ligarAbasImport();
+  $('of-arquivo').addEventListener('change',e=>{
+    const f=e.target.files&&e.target.files[0];
+    if(!f)return;
+    const fr=new FileReader();
+    // OFX do Sicredi vem em CHARSET 1252; ler como UTF-8 quebraria os acentos
+    fr.onload=()=>{textoOfx=String(fr.result||'');previaOfx();};
+    fr.readAsText(f,'ISO-8859-1');
+  });
+}
+
+function previaOfx(resolvidos){
+  const r=analisarOfx(textoOfx);
+  // reaplica o que já foi respondido nesta sessão para os "sempre perguntar"
+  (resolvidos||[]).forEach(res=>r.itens.forEach(x=>{
+    if(x.fitid===res.fitid){x.cat=res.cat;x.situacao=res.situacao;}
+  }));
+  r.pendentes=[...new Set(r.itens.filter(x=>x.situacao==='pendente').map(x=>x.memo))];
+  const box=$('of-previa');
+  if(r.erroGeral){box.innerHTML=`<div class="card"><div class="vazio" style="color:var(--erro)">${esc(r.erroGeral)}</div></div>`;return;}
+  itensOfx=r.itens;
+  const g=s=>itensOfx.filter(x=>x.situacao===s);
+  const ok=g('ok'),pend=g('pendente'),ent=g('entrada'),ign=g('ignorar'),rep=g('repetido'),tr=g('transferencia');
+  const soma=a=>a.reduce((s,x)=>s+x.valorAbs,0);
+  const porCat={};ok.forEach(x=>porCat[x.cat]=(porCat[x.cat]||0)+x.valorAbs);
+
+  box.innerHTML=`
+    ${pend.length?`
+    <div class="card" style="margin-bottom:16px;border-color:rgba(245,166,35,.4)">
+      <div class="ctitle" style="color:var(--amber)">${pend.length} pagamento(s) sem regra — precisa da sua resposta</div>
+      <div class="text-sm text-muted" style="margin-bottom:12px">
+        Não classifico por aproximação. Escolha a categoria e a regra fica guardada para as próximas importações.
+        Quem ficar sem resposta não é importado.
+      </div>
+      <div class="twrap" style="max-height:360px;overflow-y:auto"><table>
+        <thead><tr><th>Data</th><th>Quem</th><th style="text-align:right">Valor</th><th>Categoria</th></tr></thead>
+        <tbody>${r.pendentes.map(m=>{
+          const its=pend.filter(x=>x.memo===m);
+          return `<tr>
+            <td class="num text-sm">${esc(fmtData(its[0].data))}${its.length>1?`<div class="text-sm text-muted">+${its.length-1}</div>`:''}</td>
+            <td class="text-sm">${esc(m.slice(0,52))}</td>
+            <td class="num" style="text-align:right">${esc(fBRL(soma(its)))}</td>
+            <td><select data-ofxmapa="${esc(m)}" data-sempre="${its[0].perguntarSempre?'1':''}" style="padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--bg-alt);color:var(--text);font-size:12px;font-family:'Inter',sans-serif;max-width:190px">
+              <option value="">— escolher —</option>
+              <option value="__ignorar">(não lançar nunca)</option>
+              ${[...CATS_CUSTO,CAT_TRANSFER].map(c=>`<option ${its[0].sugestao===c?'selected':''}>${esc(c)}</option>`).join('')}
+            </select>${its[0].perguntarSempre?'<div class="text-sm" style="color:var(--amber);font-size:10.5px">pergunta todo mês</div>':''}</td>
+          </tr>`;}).join('')}</tbody>
+      </table></div>
+      <button class="btn btn-s btn-sm" id="btn-ofx-mapa" style="margin-top:10px">Salvar regras e reconferir</button>
+    </div>`:''}
+
+    <div class="card">
+      <div class="ctitle">Resumo do arquivo</div>
+      <div class="fin-kgrid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kcard"><div class="kval valor-pos num">${ok.length}</div><div class="klbl">Pagamentos a importar</div><div class="ksub">${esc(fBRL(soma(ok)))}</div></div>
+        <div class="kcard"><div class="kval num" style="color:var(--amber)">${pend.length}</div><div class="klbl">Sem regra</div><div class="ksub">${esc(fBRL(soma(pend)))} — ficam de fora</div></div>
+        <div class="kcard"><div class="kval num">${rep.length}</div><div class="klbl">Já importados</div><div class="ksub">ignorados pelo FITID</div></div>
+      </div>
+      <div class="fin-kgrid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kcard"><div class="kval num" style="color:#6AA0FF">${tr.length}</div><div class="klbl">Depósito de dinheiro</div><div class="ksub">${esc(fBRL(soma(tr)))} — transferência</div></div>
+        <div class="kcard"><div class="kval num" style="color:var(--text-3)">${ent.length}</div><div class="klbl">Entradas</div><div class="ksub">${esc(fBRL(soma(ent)))} — não viram receita</div></div>
+        <div class="kcard"><div class="kval num" style="color:var(--text-3)">${ign.length}</div><div class="klbl">Regra de ignorar</div><div class="ksub">saque, empréstimo</div></div>
+      </div>
+
+      ${ok.length?`<div class="ctitle" style="margin-top:18px">Por categoria</div>
+        ${Object.entries(porCat).sort((a,b)=>b[1]-a[1]).map(([c,v])=>`
+          <div class="fp-row"><div class="fp-top"><span class="fp-nome">${esc(c)}</span>
+          <span class="fp-val">${esc(fBRL(v))}</span></div>
+          <div class="fp-track"><div class="fp-fill" style="width:${v/Math.max(...Object.values(porCat))*100}%;background:var(--accent)"></div></div></div>`).join('')}`:''}
+
+      <div class="flex gap8" style="margin-top:18px;flex-wrap:wrap">
+        <button class="btn btn-p" id="btn-gravar-ofx" ${ok.length||tr.length?'':'disabled'}>Importar</button>
+        <span class="text-sm text-muted" style="align-self:center">Só acrescenta. Nada do que já existe é alterado.</span>
+      </div>
+    </div>`;
+
+  if(pend.length)$('btn-ofx-mapa').addEventListener('click',()=>{
+    const regras=getRegrasOfx();let n=0;
+    box.querySelectorAll('[data-ofxmapa]').forEach(sel=>{
+      if(!sel.value)return;
+      const memo=sel.dataset.ofxmapa;
+      // Guarda o nome sem o prefixo da operação e sem o CPF/CNPJ, que mudam
+      const chave=normNome(memo).replace(/^(pagamento|recebimento|devolucao) pix \w+ ?/,'')
+        .replace(/^liquidacao boleto ?\S*/,'').replace(/^compras nacionais \S+ ?/,'')
+        .replace(/^\d{11,14} /,'').trim().slice(0,40);
+      if(!chave)return;
+      if(sel.dataset.sempre){
+        // aplica só nesta importação, sem virar regra fixa
+        itensOfx.forEach(x=>{if(x.memo===memo&&x.situacao==='pendente'){
+          if(sel.value==='__ignorar'){x.situacao='ignorar';}
+          else{x.cat=sel.value;x.situacao='ok';}
+        }});
+      }else{
+        regras.unshift(sel.value==='__ignorar'?{m:chave,acao:'ignorar'}:{m:chave,cat:sel.value});
+      }
+      n++;
+    });
+    if(!n){toast('Escolha ao menos uma categoria.',true);return;}
+    setRegrasOfx(regras);
+    const resolvidos=itensOfx.filter(x=>x.perguntarSempre&&x.situacao!=='pendente');
+    toast(`${n} resposta(s) aplicada(s).`);
+    previaOfx(resolvidos);
+  });
+
+  $('btn-gravar-ofx').addEventListener('click',()=>{
+    if(!confirm(`Importar ${ok.length} pagamento(s) e ${tr.length} transferência(s)?\n\n`
+      +(pend.length?`${pend.length} sem regra ficam de fora.\n`:'')
+      +'Nada do que já está no sistema será alterado.'))return;
+    const res=gravarOfx(itensOfx);
+    toast(`${res.pagas} pagamento(s) importados.`);
     navTo('painel');
   });
 }

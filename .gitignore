@@ -74,3 +74,6 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# Extratos bancários reais — nunca versionar nem publicar
+EXTRATOS/
