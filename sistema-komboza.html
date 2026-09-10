@@ -2471,6 +2471,7 @@ const REGRAS_OFX_BASE=[
   {m:'henrique simoes',cat:'Atração'},{m:'frederico righi',cat:'Atração',obs:'Fred Rock'},
   {m:'raphael barbosa silva',cat:'Atração'},{m:'flavio cardoso de araujo',cat:'Atração',obs:'Evento CBJ'},
   {m:'marcelo silveira neto',cat:'Atração',obs:'Banda Shello'},
+  {m:'mauricio leite',cat:'Atração',obs:'Maury Pop'},
   {m:'vitor gabriel',cat:'Freelance'},{m:'andreia luiza silva faria',cat:'Freelance',obs:'Leandro'},
   {m:'luana prado',cat:'Freelance'},{m:'leandro guilherme',cat:'Freelance'},
   {m:'vitoria emanuele',cat:'Freelance'},
@@ -2508,8 +2509,7 @@ const REGRAS_OFX_BASE=[
   {m:'pix marketplace',acao:'perguntar',cat:'Custo dos Produtos'},
   {m:'sacolao',acao:'perguntar',cat:'Custo dos Produtos'},
   {m:'iasmin',acao:'perguntar',cat:'Prolabore (Leo)'},
-  {m:'silvania',acao:'perguntar'},{m:'caroline mota',acao:'perguntar'},
-  {m:'mauricio leite',acao:'perguntar',cat:'Atração',obs:'Maury Pop'}
+  {m:'silvania',acao:'perguntar'},{m:'caroline mota',acao:'perguntar'}
 ];
 const getRegrasOfx=()=>{const r=ls.g('regrasOfx',null);return Array.isArray(r)?r:REGRAS_OFX_BASE.slice();};
 const setRegrasOfx=r=>ls.s('regrasOfx',r);
