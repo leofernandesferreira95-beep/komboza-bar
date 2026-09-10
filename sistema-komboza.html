@@ -779,12 +779,12 @@ const CAT_PESSOAL='Uso pessoal — fora da operação';
 const CATS_FIXAS=[CAT_TAXA,CAT_FATURAMENTO,CAT_TRANSFER,CAT_PESSOAL];
 
 // ═══════════ DINHEIRO ═══════════
-// Premissa, não medição: ninguém controla o caixa em espécie hoje. O pai do Leo
-// usa quase todo o dinheiro na operação, então cada venda estimada ganha um
-// custo espelho de mesmo valor — o resultado do Dinheiro fica zero de propósito.
-// Consequência conhecida: CMV sobe e margem cai. Por isso as análises isolam
-// Origem = Estimado.
-const PCT_DINHEIRO=15;
+// Sem estimativa. O pai do Leo passou a anotar tudo — vendas e gastos em
+// espécie entram como lançamento manual ou pela planilha modelo (conta
+// Dinheiro). O depósito no Sicredi entra pelo OFX como Transferência entre
+// contas. O saldo da conta Dinheiro passa a ser real:
+//   vendas lançadas  −  depósitos  −  gastos lançados
+// A importação do Stone não cria mais nenhuma linha de Dinheiro.
 // Reservado para quando o relatório do cartão alimentação entrar; ele não vem
 // no extrato do Stone.
 const TAXA_ALIMENTACAO=3.5;
@@ -819,6 +819,31 @@ function garantirCategorias(){
     if(!existe(n)){c.var=[...(c.var||[]),n];mudou=true;}
   });
   if(mudou){setCats(c);reloadCats();}
+}
+
+// A estimativa de dinheiro (venda + custo espelho) foi aposentada: o pai do Leo
+// passou a anotar tudo. As linhas antigas com Origem = Estimado precisam sair,
+// senão contam em dobro com o que ele lançar à mão. Só remove com confirmação e
+// registra no histórico — nada é apagado sem o usuário mandar.
+function removerEstimativaDinheiro(){
+  const lancs=getLanc();
+  const est=lancs.filter(l=>l.origem==='Estimado');
+  if(!est.length)return;
+  if(sessionStorage.getItem('kb_estimativaOk')==='nao')return;
+  const rec=est.filter(l=>l.tipo==='receber').reduce((s,l)=>s+(l.valor||0),0);
+  const pag=est.filter(l=>l.tipo==='pagar').reduce((s,l)=>s+(l.valor||0),0);
+  const ok=confirm(
+    `O sistema não estima mais o dinheiro — você vai lançar as vendas e os gastos em espécie à mão.\n\n`+
+    `Há ${est.length} lançamento(s) estimados antigos:\n`+
+    `  • ${fBRL(rec)} de venda estimada\n`+
+    `  • ${fBRL(pag)} de custo espelho\n\n`+
+    `Remover agora? Se ficarem, vão contar em dobro com o que você anotar.\n`+
+    `(Os dados do Stone, do banco e os seus lançamentos manuais não são tocados.)`);
+  if(!ok){sessionStorage.setItem('kb_estimativaOk','nao');return;}
+  const resto=lancs.filter(l=>l.origem!=='Estimado');
+  setLanc(resto);
+  addHist('Removeu estimativa de dinheiro',`${est.length} lançamento(s) — ${fBRL(rec)} venda, ${fBRL(pag)} custo`);
+  toast(`${est.length} lançamento(s) estimados removidos.`);
 }
 // ═══════════════════════════════════════════════
 // LOGIN
@@ -914,6 +939,7 @@ auth.onAuthStateChanged(async user=>{
     reloadCats();
     migrarLancamentos();
     garantirCategorias();
+    removerEstimativaDinheiro();
     fsStartSync();
     iniciarSyncPeriodico();
     navTo('painel');
@@ -1902,44 +1928,9 @@ function gravarStone(linhas){
 
   setFalhasStone(falhas);
   const dias=[...new Set(linhas.filter(l=>l.situacao==='ok'&&l.diaOperacional).map(l=>l.diaOperacional))];
-  const est=estimarDinheiro(lancs,dias);
   setLanc(lancs);
   addHist('Importou extrato Stone',`${vendas} venda(s)`);
-  return{vendas,pessoais,falhas:novasFalhas,dias:dias.length,estimado:est};
-}
-
-// Venda em dinheiro estimada em 15% do cartão+PIX do dia, com custo espelho de
-// mesmo valor — o pai do Leo gasta quase tudo na operação. É premissa, não
-// medição: por isso vai marcada como Estimado e sai das análises de cliente.
-// Recalcula em cima do próprio lançamento quando o dia é reimportado, em vez de
-// apagar e recriar.
-function estimarDinheiro(lancs,dias){
-  let criados=0,total=0;
-  dias.forEach(dia=>{
-    const base=lancs.filter(l=>l.origem==='Stone'&&!l.foraDaAnalise&&l.diaOperacional===dia)
-      .reduce((s,l)=>s+(l.valorBruto||0),0);
-    if(base<=0)return;
-    const valor=Math.round(base*(PCT_DINHEIRO/100)*100)/100;
-    total+=valor;
-    const marca=(l,tp)=>l.origem==='Estimado'&&l.diaOperacional===dia&&l.tipo===tp;
-    const venda=lancs.find(l=>marca(l,'receber'));
-    const custo=lancs.find(l=>marca(l,'pagar'));
-    const comum={valor,valorBruto:valor,valorLiquido:valor,conta:'Dinheiro',
-      diaOperacional:dia,vencimento:dia,dataPagamento:dia,dataRecebimento:dia,
-      pago:true,qtdTransacoes:1,origem:'Estimado',atualizadoEm:agora(),
-      obs:`${PCT_DINHEIRO}% de ${fBRL(base)} em cartão e PIX`};
-    if(venda)Object.assign(venda,comum);
-    else{lancs.push({id:uid('l'),tipo:'receber',descricao:'Venda em dinheiro (estimada)',
-      categoria:CAT_FATURAMENTO,forma:'Dinheiro',bandeira:'',dataVenda:null,
-      totalParcelas:1,parcelaAtual:1,grupoId:null,cliente:'',showId:null,
-      foraDaAnalise:false,criadoEm:agora(),...comum});criados++;}
-    if(custo)Object.assign(custo,comum);
-    else{lancs.push({id:uid('l'),tipo:'pagar',descricao:'Custo pago em dinheiro (estimado)',
-      categoria:CAT_INSUMOS,forma:'Dinheiro',bandeira:'',dataVenda:null,
-      totalParcelas:1,parcelaAtual:1,grupoId:null,cliente:'',showId:null,
-      foraDaAnalise:false,criadoEm:agora(),...comum});criados++;}
-  });
-  return{criados,total};
+  return{vendas,pessoais,falhas:novasFalhas,dias:dias.length};
 }
 // Pensado para colar o extrato do banco: a planilha modelo usa ponto e vírgula
 // (padrão do Excel em português) e cabeçalho em português. A importação só
@@ -2317,7 +2308,6 @@ function previaStone(texto){
   const ok=cont('ok'),falha=cont('falha'),pessoal=cont('pessoal'),rep=cont('repetido'),pend=cont('pendente'),erro=cont('erro');
   const soma=a=>a.reduce((s,l)=>s+l.bruto,0);
   const dias=[...new Set(ok.map(l=>l.diaOperacional))];
-  const estim=Math.round(soma(ok)*(PCT_DINHEIRO/100)*100)/100;
 
   box.innerHTML=`
     ${pend.length?`
@@ -2349,7 +2339,7 @@ function previaStone(texto){
       <div class="fin-kgrid" style="grid-template-columns:repeat(3,1fr)">
         <div class="kcard"><div class="kval num" style="color:var(--amber)">${pessoal.length}</div><div class="klbl">Parcelamentos</div><div class="ksub">${esc(fBRL(soma(pessoal)))} — uso pessoal</div></div>
         <div class="kcard"><div class="kval num" style="color:var(--amber)">${pend.length}</div><div class="klbl">Produto pendente</div><div class="ksub">não entram sem resposta</div></div>
-        <div class="kcard"><div class="kval valor-rec num">${esc(fBRL(estim))}</div><div class="klbl">Dinheiro estimado</div><div class="ksub">${PCT_DINHEIRO}% em ${dias.length} dia(s)</div></div>
+        <div class="kcard"><div class="kval num">${dias.length}</div><div class="klbl">Dias no arquivo</div><div class="ksub">dia operacional, corte ${CORTE_OPERACIONAL}h</div></div>
       </div>
 
       ${falha.length?`
@@ -2407,7 +2397,7 @@ function previaStone(texto){
     if(pend.length)resumo.push(`${pend.length} ficam de fora por produto não mapeado`);
     if(!confirm('Importar?\n\n'+resumo.join('\n')+'\n\nNada do que já está no sistema será alterado.'))return;
     const res=gravarStone(linhasStone);
-    toast(`${res.vendas} venda(s) importadas.`+(res.estimado.criados?` Dinheiro estimado em ${res.dias} dia(s).`:''));
+    toast(`${res.vendas} venda(s) importadas.`);
     navTo('painel');
   });
 }
@@ -2770,9 +2760,10 @@ function previaOfx(resolvidos){
 // ═══════════════════════════════════════════════
 // ANÁLISES
 // ═══════════════════════════════════════════════
-// Base: só venda real do bar. Ficam de fora o dinheiro estimado (premissa, não
-// medição), o uso pessoal (passa pelo CNPJ mas não é venda) e as falhas (nem
-// viraram lançamento). Misturar qualquer um deles distorce ticket médio.
+// Base: só venda pelo Stone. Ficam de fora o uso pessoal (passa pelo CNPJ mas
+// não é venda), as falhas (nem viraram lançamento) e o dinheiro lançado à mão
+// (não tem hora nem bandeira para análise de cliente). Misturar distorce o
+// ticket médio.
 const horaDoLanc=l=>l.dataVenda?parseInt(l.dataVenda.slice(11,13)):null;
 
 function semanaAtual(){
@@ -2855,7 +2846,7 @@ function renderAnalises(){
 
   $('main').innerHTML=`
     <div class="ph">
-      <div><h1>Análises</h1><p>Só venda pelo Stone — dinheiro estimado e uso pessoal ficam de fora</p></div>
+      <div><h1>Análises</h1><p>Só venda pelo Stone — dinheiro lançado à mão e uso pessoal ficam de fora</p></div>
     </div>
 
     <div class="card" style="margin-bottom:16px">
@@ -3091,7 +3082,7 @@ function renderExportar(){
     if(!d.length){toast('Nada no filtro atual.',true);return;}
     baixar(`komboza-lancamentos-${sufixo()}.json`,
       JSON.stringify({gerado:agora(),filtros:filtrosExport(),corteOperacional:CORTE_OPERACIONAL,
-        percentualDinheiroEstimado:PCT_DINHEIRO,total:d.length,lancamentos:d},null,2),'application/json');
+        total:d.length,lancamentos:d},null,2),'application/json');
     toast(`${d.length} lançamento(s) exportados.`);
   });
 
@@ -3143,7 +3134,7 @@ function renderExportar(){
       const sai=da.filter(l=>l.tipo==='pagar').reduce((s,l)=>s+(l.valorBruto??l.valor??0),0);
       linhas.push([c,ent.toFixed(2).replace('.',','),sai.toFixed(2).replace('.',','),
         (ent-sai).toFixed(2).replace('.',','),
-        c==='Dinheiro'?'zera por causa do custo espelho estimado':''].map(csvSeguro).join(';'));
+        c==='Dinheiro'?'saldo real: vendas e gastos lançados à mão, menos depósitos':''].map(csvSeguro).join(';'));
     });
     baixar(`komboza-saldo-${sufixo()}.csv`,'﻿'+linhas.join('\r\n'),'text/csv;charset=utf-8;');
     toast('Saldo exportado.');
