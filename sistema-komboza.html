@@ -1944,13 +1944,18 @@ function estimarDinheiro(lancs,dias){
 // Pensado para colar o extrato do banco: a planilha modelo usa ponto e vírgula
 // (padrão do Excel em português) e cabeçalho em português. A importação só
 // ACRESCENTA lançamentos, nunca substitui o que já existe.
-const COLUNAS_MODELO=['Data','Tipo','Descrição','Valor','Categoria','Forma','Pago'];
+// Data e Valor são as únicas obrigatórias. Hora e Conta são opcionais: sem Hora
+// não há corte de madrugada (o lançamento fica no dia digitado); sem Conta o
+// sistema assume Sicredi. As demais colunas do modelo §9 (dia operacional,
+// valor líquido, origem, qtd) são derivadas ou só valem para Stone/OFX — quem
+// digita à mão não preenche isso.
+const COLUNAS_MODELO=['Data','Hora','Tipo','Descrição','Valor','Categoria','Forma','Conta','Pago'];
 
 function baixarModeloPlanilha(){
   const ex=[
-    ['05/09/2026','Pagar','Distribuidora de bebida','1650,00','Bebidas / Estoque','Boleto','Nao'],
-    ['06/09/2026','Receber','Aluguel do espaço','1500,00','Aluguel do espaço','PIX','Sim'],
-    ['10/09/2026','Pagar','Conta de energia','640,00','Energia','Boleto','Nao']
+    ['05/09/2026','','Pagar','Distribuidora de bebida','1650,00','Custo dos Produtos','Boleto','Sicredi','Nao'],
+    ['06/09/2026','','Pagar','Conta de energia CEMIG','640,00','Luz (bar)','Boleto','Sicredi','Nao'],
+    ['06/09/2026','23:40','Receber','Venda avulsa em dinheiro','80,00','Faturamento com Vendas de Produtos','Dinheiro','Dinheiro','Sim']
   ];
   const linhas=[COLUNAS_MODELO.join(';'), ...ex.map(l=>l.join(';'))];
   // BOM na frente para o Excel abrir com acento correto
@@ -1990,14 +1995,26 @@ function lerCSV(texto){
 
 const chaveCol=s=>semAcento(s).replace(/[^a-z0-9]/g,'');
 const ALIAS_COL={
-  data:['data','vencimento','datavencimento','datadolancamento','dt'],
+  data:['data','vencimento','datavencimento','datadolancamento','dt','datadavenda'],
+  hora:['hora','horario','hrs','hr','horavenda'],
   tipo:['tipo','operacao','movimento','natureza'],
   descricao:['descricao','historico','detalhe','lancamento','identificacao'],
-  valor:['valor','vlr','montante','quantia'],
+  valor:['valor','vlr','montante','quantia','valorbruto'],
   categoria:['categoria','cat','classificacao'],
   forma:['forma','formapagamento','formadepagamento','pagamento','meio'],
+  conta:['conta','banco','contabancaria','caixa'],
   pago:['pago','quitado','baixado','status','situacao']
 };
+// "23:40", "23h40", "2340" → {hora:23,min:40}; vazio/ inválido → null
+function lerHoraBR(s){
+  const t=String(s??'').trim();
+  if(!t)return null;
+  let m=t.match(/^(\d{1,2})[:hH.\s]?(\d{2})?/);
+  if(!m)return null;
+  const h=parseInt(m[1],10), mi=m[2]?parseInt(m[2],10):0;
+  if(isNaN(h)||h>23||mi>59)return null;
+  return{hora:h,min:mi};
+}
 
 function lerValorBR(s){
   let t=String(s??'').replace(/r\$/gi,'').replace(/\s/g,'').trim();
@@ -2011,7 +2028,9 @@ function lerValorBR(s){
 }
 
 function lerDataBR(s){
-  const t=String(s??'').trim();
+  // Aceita "06/09/2026" e também "06/09/2026 23:40" (extrato às vezes cola junto);
+  // a hora, quando vem aqui, é ignorada — quem trata hora é a coluna Hora.
+  const t=String(s??'').trim().split(/[ T]/)[0];
   let m=t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
   if(m){let[,d,mo,y]=m;if(y.length===2)y='20'+y;
     return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`;}
@@ -2039,12 +2058,27 @@ function analisarPlanilha(texto){
 
   return{linhas:dados.map((l,n)=>{
     const bruto={
-      data:pega(l,'data'),tipo:pega(l,'tipo'),descricao:pega(l,'descricao'),
-      valor:pega(l,'valor'),categoria:pega(l,'categoria'),forma:pega(l,'forma'),pago:pega(l,'pago')
+      data:pega(l,'data'),hora:pega(l,'hora'),tipo:pega(l,'tipo'),descricao:pega(l,'descricao'),
+      valor:pega(l,'valor'),categoria:pega(l,'categoria'),forma:pega(l,'forma'),
+      conta:pega(l,'conta'),pago:pega(l,'pago')
     };
     const erros=[],avisos=[];
-    const venc=lerDataBR(bruto.data);
-    if(!venc)erros.push('data inválida');
+    const dataCal=lerDataBR(bruto.data);
+    if(!dataCal)erros.push('data inválida');
+    // Hora: coluna própria; se vazia, tenta achar hora colada na coluna Data
+    const hm=lerHoraBR(bruto.hora)||lerHoraBR((String(bruto.data).split(/[ T]/)[1]||''));
+    // Sem hora → fica no dia digitado. Com hora → aplica o corte de madrugada (§8.2).
+    let venc=dataCal;
+    if(dataCal&&hm){
+      const[y,mo,d]=dataCal.split('-').map(Number);
+      venc=diaOperacionalDe({ano:y,mes:mo,dia:d,hora:hm.hora});
+    }
+    // Conta: em branco assume Sicredi; valor fora da lista vira aviso, não erro
+    let conta='Sicredi';
+    if(bruto.conta){
+      const achou=CONTAS.find(c=>semAcento(c)===semAcento(bruto.conta));
+      if(achou)conta=achou; else avisos.push('conta desconhecida — usando Sicredi');
+    }
     let valor=lerValorBR(bruto.valor);
     if(isNaN(valor)||valor===0)erros.push('valor inválido');
 
@@ -2070,7 +2104,8 @@ function analisarPlanilha(texto){
       semAcento(e.descricao||'')===semAcento(descricao));
     if(dup)avisos.push('já existe no sistema');
 
-    return{n:n+2,venc,tipo,descricao,valor,categoria,forma:bruto.forma||'',pago,erros,avisos,dup};
+    const dataVenda=(dataCal&&hm)?`${dataCal}T${String(hm.hora).padStart(2,'0')}:${String(hm.min).padStart(2,'0')}`:null;
+    return{n:n+2,venc,dataVenda,conta,tipo,descricao,valor,categoria,forma:bruto.forma||'',pago,erros,avisos,dup};
   })};
 }
 
@@ -2123,6 +2158,8 @@ function renderImportarPlanilha(){
       <div class="text-sm text-muted" style="margin-top:12px">
         Colunas: ${COLUNAS_MODELO.join(' · ')}. Só <strong>Data</strong> e <strong>Valor</strong> são obrigatórias.
         Sem a coluna Tipo, valor negativo vira saída e positivo vira entrada, que é como o extrato costuma vir.
+        <strong>Hora</strong> é opcional (com ela, venda de madrugada conta para a noite anterior); <strong>Conta</strong> em branco assume Sicredi.
+        Esta planilha é para digitar boletos e lançamentos avulsos — vendas de cartão entram pelo extrato Stone, contas a pagar pelo extrato Sicredi.
       </div>
 
     </div>
@@ -2172,7 +2209,7 @@ function mostrarPreviaImport(texto){
       ${dups?`<div class="text-sm" style="color:var(--amber);margin-bottom:10px">Alguns lançamentos já existem com a mesma data, valor e descrição. Desmarque se não quiser repetir.</div>`:''}
       <div class="twrap" style="max-height:420px;overflow-y:auto">
         <table>
-          <thead><tr><th></th><th>Linha</th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th><th>Situação</th></tr></thead>
+          <thead><tr><th></th><th>Linha</th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th style="text-align:right">Valor</th><th>Situação</th></tr></thead>
           <tbody>${linhasImport.map((l,i)=>`
             <tr>
               <td>${l.erros.length?'':`<input type="checkbox" class="imp-ck" data-i="${i}" ${l.dup?'':'checked'} style="width:15px;height:15px;accent-color:var(--accent)">`}</td>
@@ -2181,6 +2218,7 @@ function mostrarPreviaImport(texto){
               <td>${l.tipo?`<span class="bdg ${l.tipo==='receber'?'bv':'bvm'}">${l.tipo==='receber'?'Entrada':'Saída'}</span>`:'—'}</td>
               <td>${esc(l.descricao)}</td>
               <td>${esc(l.categoria)||'—'}</td>
+              <td class="text-sm">${esc(l.conta||'Sicredi')}</td>
               <td class="num fw6 ${l.tipo==='receber'?'valor-rec':'valor-pag'}" style="text-align:right">${isNaN(l.valor)?'—':esc(fBRL(l.valor))}</td>
               <td class="text-sm">${l.erros.length
                 ?`<span style="color:var(--erro)">${esc(l.erros.join(', '))}</span>`
@@ -2206,10 +2244,12 @@ function mostrarPreviaImport(texto){
     escolhidas.forEach(l=>{
       lancs.push({
         id:uid('l'),tipo:l.tipo||'pagar',valor:l.valor,descricao:l.descricao,
-        categoria:l.categoria,forma:l.forma,vencimento:l.venc,
+        categoria:l.categoria,forma:l.forma,conta:l.conta||'Sicredi',bandeira:'',
+        vencimento:l.venc,dataVenda:l.dataVenda||null,diaOperacional:l.venc,
         totalParcelas:1,parcelaAtual:1,grupoId:null,
         pago:l.pago,dataPagamento:l.pago?l.venc:null,
-        cliente:'',showId:null,obs:'Importado de planilha',origem:'planilha',
+        cliente:'',showId:null,foraDaAnalise:false,
+        obs:'Importado de planilha',origem:'manual',
         criadoEm:agora(),atualizadoEm:agora()
       });
     });
