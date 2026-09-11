@@ -1952,7 +1952,8 @@ function baixarModeloPlanilha(){
   const ex=[
     ['05/09/2026','','Pagar','Distribuidora de bebida','1650,00','Custo dos Produtos','Boleto','Sicredi','Nao'],
     ['06/09/2026','','Pagar','Conta de energia CEMIG','640,00','Luz (bar)','Boleto','Sicredi','Nao'],
-    ['06/09/2026','23:40','Receber','Venda avulsa em dinheiro','80,00','Faturamento com Vendas de Produtos','Dinheiro','Dinheiro','Sim']
+    ['06/09/2026','23:40','Receber','Venda avulsa em dinheiro','80,00','Faturamento com Vendas de Produtos','Dinheiro','Dinheiro','Sim'],
+    ['07/09/2026','','Transferência','Depósito do caixa no banco','800,00','','','',  'Sim']
   ];
   const linhas=[COLUNAS_MODELO.join(';'), ...ex.map(l=>l.join(';'))];
   // BOM na frente para o Excel abrir com acento correto
@@ -2079,10 +2080,13 @@ function analisarPlanilha(texto){
     let valor=lerValorBR(bruto.valor);
     if(isNaN(valor)||valor===0)erros.push('valor inválido');
 
-    // Tipo: pela coluna quando existe; senão pelo sinal, que é como vem o extrato
+    // Tipo: pela coluna quando existe; senão pelo sinal, que é como vem o extrato.
+    // "Transferência" é um terceiro tipo — depósito do caixa no Sicredi, vira
+    // duas pernas na importação (sai do Dinheiro, entra no Sicredi), igual o OFX.
     let tipo=null;
     const t=semAcento(bruto.tipo);
-    if(/receb|receit|entrad|credit/.test(t))tipo='receber';
+    if(/transfer/.test(t))tipo='transferencia';
+    else if(/receb|receit|entrad|credit/.test(t))tipo='receber';
     else if(/pag|desp|said|debit/.test(t))tipo='pagar';
     else if(!isNaN(valor))tipo=valor<0?'pagar':'receber';
     if(!isNaN(valor))valor=Math.abs(valor);
@@ -2156,7 +2160,9 @@ function renderImportarPlanilha(){
         Colunas: ${COLUNAS_MODELO.join(' · ')}. Só <strong>Data</strong> e <strong>Valor</strong> são obrigatórias.
         Sem a coluna Tipo, valor negativo vira saída e positivo vira entrada, que é como o extrato costuma vir.
         <strong>Hora</strong> é opcional (com ela, venda de madrugada conta para a noite anterior); <strong>Conta</strong> em branco assume Sicredi.
-        Esta planilha é para digitar boletos e lançamentos avulsos — vendas de cartão entram pelo extrato Stone, contas a pagar pelo extrato Sicredi.
+        Tipo aceita um terceiro valor, <strong>Transferência</strong> — depósito do caixa no banco: a linha vira duas
+        (sai do Dinheiro, entra no Sicredi), sem afetar Categoria/Conta, que são preenchidas sozinhas.
+        Esta planilha é para digitar boletos, vendas e gastos em dinheiro e depósitos — vendas de cartão entram pelo extrato Stone, boletos também podem vir do extrato Sicredi.
       </div>
 
     </div>
@@ -2212,10 +2218,11 @@ function mostrarPreviaImport(texto){
               <td>${l.erros.length?'':`<input type="checkbox" class="imp-ck" data-i="${i}" ${l.dup?'':'checked'} style="width:15px;height:15px;accent-color:var(--accent)">`}</td>
               <td class="num">${l.n}</td>
               <td class="num">${l.venc?esc(fmtData(l.venc)):'—'}</td>
-              <td>${l.tipo?`<span class="bdg ${l.tipo==='receber'?'bv':'bvm'}">${l.tipo==='receber'?'Entrada':'Saída'}</span>`:'—'}</td>
+              <td>${l.tipo==='transferencia'?'<span class="bdg" style="background:var(--amber-bg,rgba(245,166,35,.15));color:var(--amber)">Transferência</span>'
+                :l.tipo?`<span class="bdg ${l.tipo==='receber'?'bv':'bvm'}">${l.tipo==='receber'?'Entrada':'Saída'}</span>`:'—'}</td>
               <td>${esc(l.descricao)}</td>
-              <td>${esc(l.categoria)||'—'}</td>
-              <td class="text-sm">${esc(l.conta||'Sicredi')}</td>
+              <td>${l.tipo==='transferencia'?esc(CAT_TRANSFER):(esc(l.categoria)||'—')}</td>
+              <td class="text-sm">${l.tipo==='transferencia'?'Dinheiro → Sicredi':esc(l.conta||'Sicredi')}</td>
               <td class="num fw6 ${l.tipo==='receber'?'valor-rec':'valor-pag'}" style="text-align:right">${isNaN(l.valor)?'—':esc(fBRL(l.valor))}</td>
               <td class="text-sm">${l.erros.length
                 ?`<span style="color:var(--erro)">${esc(l.erros.join(', '))}</span>`
@@ -2239,20 +2246,31 @@ function mostrarPreviaImport(texto){
     if(!confirm(`Importar ${escolhidas.length} lançamento(s)?\n\nNada do que já está no sistema será alterado.`))return;
     const lancs=getLanc();
     escolhidas.forEach(l=>{
-      lancs.push({
-        id:uid('l'),tipo:l.tipo||'pagar',valor:l.valor,descricao:l.descricao,
-        categoria:l.categoria,forma:l.forma,conta:l.conta||'Sicredi',bandeira:'',
+      const comum={valorBruto:l.valor,valorLiquido:l.valor,bandeira:'',
         vencimento:l.venc,dataVenda:l.dataVenda||null,diaOperacional:l.venc,
-        totalParcelas:1,parcelaAtual:1,grupoId:null,
-        pago:l.pago,dataPagamento:l.pago?l.venc:null,
+        dataRecebimento:l.venc,totalParcelas:1,parcelaAtual:1,grupoId:null,
+        pago:l.pago,dataPagamento:l.pago?l.venc:null,qtdTransacoes:1,
         cliente:'',showId:null,foraDaAnalise:false,
         obs:'Importado de planilha',origem:'manual',
-        criadoEm:agora(),atualizadoEm:agora()
+        criadoEm:agora(),atualizadoEm:agora()};
+      if(l.tipo==='transferencia'){
+        // Duas pernas, igual o depósito detectado no OFX: sai do caixa, entra no banco.
+        lancs.push({id:uid('l'),tipo:'pagar',valor:l.valor,descricao:l.descricao||'Depósito do caixa',
+          categoria:CAT_TRANSFER,forma:l.forma||'Dinheiro',conta:'Dinheiro',...comum});
+        lancs.push({id:uid('l'),tipo:'receber',valor:l.valor,descricao:l.descricao||'Depósito do caixa',
+          categoria:CAT_TRANSFER,forma:l.forma||'Dinheiro',conta:'Sicredi',...comum});
+        return;
+      }
+      lancs.push({
+        id:uid('l'),tipo:l.tipo||'pagar',valor:l.valor,descricao:l.descricao,
+        categoria:l.categoria,forma:l.forma,conta:l.conta||'Sicredi',...comum
       });
     });
     setLanc(lancs);
-    addHist('Importou planilha',`${escolhidas.length} lançamento(s)`);
-    toast(`${escolhidas.length} lançamento(s) importados.`);
+    const transf=escolhidas.filter(l=>l.tipo==='transferencia').length;
+    const criados=escolhidas.length+transf; // transferência gera 2 lançamentos por linha
+    addHist('Importou planilha',`${escolhidas.length} linha(s) → ${criados} lançamento(s)`);
+    toast(`${criados} lançamento(s) importados.`);
     navTo('painel');
   });
 }
