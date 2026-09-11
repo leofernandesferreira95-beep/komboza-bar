@@ -417,9 +417,15 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
   <div class="modal">
     <div class="mhead"><h2>Backup dos dados</h2><button class="mclose" data-close="m-backup">✕</button></div>
     <div class="mbody" id="backup-body"></div>
-    <div class="mfoot">
+    <div class="mfoot" style="flex-wrap:wrap">
       <button class="btn btn-s" data-close="m-backup">Fechar</button>
       <button class="btn btn-p" id="btn-baixar-json">⬇ Baixar cópia (JSON)</button>
+      <button class="btn btn-s" id="btn-zerar-lanc" style="color:var(--erro);border-color:var(--erro)">Zerar lançamentos</button>
+    </div>
+    <div class="text-sm text-muted" style="padding:0 18px 16px">
+      <strong>Zerar lançamentos</strong> apaga só os lançamentos, as falhas do Stone e os
+      depósitos ignorados do OFX. Mantém shows, agenda, categorias, regras, contas fixas
+      e o histórico. Baixe a cópia JSON antes.
     </div>
   </div>
 </div>
@@ -3544,6 +3550,34 @@ $('btn-baixar-json').addEventListener('click',()=>{
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),2000);
   toast('Cópia baixada.');
+});
+
+// Zera só o que veio das importações. Escreve o vazio direto na nuvem, sem
+// passar pela mesclagem por id — que traria tudo de volta. Não toca em shows,
+// agenda, categorias, regras, recorrentes nem histórico.
+const KEYS_ZERAR=['lancamentos','falhasStone','ofxIgnorados'];
+$('btn-zerar-lanc').addEventListener('click',async()=>{
+  if(!PODE_GRAVAR_NUVEM){toast('Cópia local: zerar está desligado.',true);return;}
+  const n=getLanc().length;
+  if(!confirm(`Apagar ${n} lançamento(s) + falhas do Stone + ignorados do OFX?\n\n`+
+    `Shows, agenda, categorias, regras e histórico ficam intactos.\n`+
+    `Já baixou a cópia JSON? Isto não tem desfazer.`))return;
+  if(!confirm('Confirma de novo: apagar os lançamentos agora?'))return;
+  const btn=$('btn-zerar-lanc');btn.disabled=true;btn.textContent='Zerando...';
+  try{
+    for(const k of KEYS_ZERAR){
+      localStorage.setItem('kb_'+k,'[]');
+      await db.collection('appData').doc(k).set({data:[],ts:firebase.firestore.FieldValue.serverTimestamp()});
+      fsUltimaSync[k]=Date.now();
+    }
+    addHist('Zerou lançamentos',`${n} lançamento(s) apagados; shows e agenda mantidos`);
+    closeM('m-backup');
+    toast(`${n} lançamento(s) apagados. Shows e agenda mantidos.`);
+    navTo('painel');
+  }catch(e){
+    toast('Erro ao zerar: '+e.message,true);
+    btn.disabled=false;btn.textContent='Zerar lançamentos';
+  }
 });
 </script>
 </body>
