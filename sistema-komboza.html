@@ -1992,17 +1992,28 @@ function lerCSV(texto){
 }
 
 const chaveCol=s=>semAcento(s).replace(/[^a-z0-9]/g,'');
+// Desde que a importação direta de Stone/OFX saiu da interface (10/09/2026),
+// quem faz esse trabalho é uma conversa com o Claude fora do sistema — e o
+// resultado vira linha nesta mesma planilha. Por isso ela também aceita, de
+// forma opcional, os campos que só uma venda de cartão ou um OFX têm de
+// verdade (Bandeira, Valor Líquido, Origem, Qtd Transações). Quem digita à
+// mão (boleto, dinheiro) simplesmente não preenche essas colunas.
 const ALIAS_COL={
   data:['data','vencimento','datavencimento','datadolancamento','dt','datadavenda'],
   hora:['hora','horario','hrs','hr','horavenda'],
   tipo:['tipo','operacao','movimento','natureza'],
   descricao:['descricao','historico','detalhe','lancamento','identificacao'],
   valor:['valor','vlr','montante','quantia','valorbruto'],
+  valorLiquido:['valorliquido','liquido','vlrliquido'],
   categoria:['categoria','cat','classificacao'],
   forma:['forma','formapagamento','formadepagamento','pagamento','meio'],
+  bandeira:['bandeira','band'],
   conta:['conta','banco','contabancaria','caixa'],
+  origem:['origem','fonte'],
+  qtd:['qtdtransacoes','qtd','quantidade','qtdtransacao'],
   pago:['pago','quitado','baixado','status','situacao']
 };
+const ORIGENS_VALIDAS=['Stone','OFX','Manual'];
 // "23:40", "23h40", "2340" → {hora:23,min:40}; vazio/ inválido → null
 function lerHoraBR(s){
   const t=String(s??'').trim();
@@ -2057,8 +2068,8 @@ function analisarPlanilha(texto){
   return{linhas:dados.map((l,n)=>{
     const bruto={
       data:pega(l,'data'),hora:pega(l,'hora'),tipo:pega(l,'tipo'),descricao:pega(l,'descricao'),
-      valor:pega(l,'valor'),categoria:pega(l,'categoria'),forma:pega(l,'forma'),
-      conta:pega(l,'conta'),pago:pega(l,'pago')
+      valor:pega(l,'valor'),valorLiquido:pega(l,'valorLiquido'),categoria:pega(l,'categoria'),forma:pega(l,'forma'),
+      bandeira:pega(l,'bandeira'),conta:pega(l,'conta'),origem:pega(l,'origem'),qtd:pega(l,'qtd'),pago:pega(l,'pago')
     };
     const erros=[],avisos=[];
     const dataCal=lerDataBR(bruto.data);
@@ -2079,6 +2090,16 @@ function analisarPlanilha(texto){
     }
     let valor=lerValorBR(bruto.valor);
     if(isNaN(valor)||valor===0)erros.push('valor inválido');
+    // Líquido: se a coluna vier vazia (caso comum — boleto, dinheiro), líquido = bruto
+    let valorLiquido=bruto.valorLiquido?lerValorBR(bruto.valorLiquido):valor;
+    if(isNaN(valorLiquido))valorLiquido=valor;
+    // Origem: em branco assume Manual; fora da lista vira aviso, não erro
+    let origem='Manual';
+    if(bruto.origem){
+      const achouOr=ORIGENS_VALIDAS.find(o=>semAcento(o)===semAcento(bruto.origem));
+      if(achouOr)origem=achouOr; else avisos.push('origem desconhecida — usando Manual');
+    }
+    const qtd=bruto.qtd?parseInt(bruto.qtd,10):1;
 
     // Tipo: pela coluna quando existe; senão pelo sinal, que é como vem o extrato.
     // "Transferência" é um terceiro tipo — depósito do caixa no Sicredi, vira
@@ -2089,7 +2110,7 @@ function analisarPlanilha(texto){
     else if(/receb|receit|entrad|credit/.test(t))tipo='receber';
     else if(/pag|desp|said|debit/.test(t))tipo='pagar';
     else if(!isNaN(valor))tipo=valor<0?'pagar':'receber';
-    if(!isNaN(valor))valor=Math.abs(valor);
+    if(!isNaN(valor)){valor=Math.abs(valor);valorLiquido=Math.abs(valorLiquido);}
 
     const descricao=bruto.descricao||'(sem descrição)';
     if(!bruto.descricao)avisos.push('sem descrição');
@@ -2106,7 +2127,9 @@ function analisarPlanilha(texto){
     if(dup)avisos.push('já existe no sistema');
 
     const dataVenda=(dataCal&&hm)?`${dataCal}T${String(hm.hora).padStart(2,'0')}:${String(hm.min).padStart(2,'0')}`:null;
-    return{n:n+2,venc,dataVenda,conta,tipo,descricao,valor,categoria,forma:bruto.forma||'',pago,erros,avisos,dup};
+    return{n:n+2,venc,dataVenda,conta,tipo,descricao,valor,valorLiquido,categoria,
+      forma:bruto.forma||'',bandeira:bruto.bandeira||'',origem,qtd:isNaN(qtd)||qtd<1?1:qtd,
+      pago,erros,avisos,dup};
   })};
 }
 
@@ -2123,10 +2146,13 @@ function marcarRepetidasNoArquivo(linhas){
   return linhas;
 }
 
-let fonteImport='stone';
+// Importação direta de Stone/OFX foi desligada da interface — decisão do Leo
+// em 10/09/2026: classificar OFX é julgamento, não regra determinística, e
+// isso é feito melhor numa conversa com o Claude, que já vira linha pronta na
+// planilha. O código de renderImportarStone/renderImportarOfx continua no
+// arquivo (não foi apagado) caso volte a ser útil — só não é mais chamado.
+let fonteImport='planilha';
 function renderImportar(){
-  if(fonteImport==='stone')return renderImportarStone();
-  if(fonteImport==='ofx')return renderImportarOfx();
   return renderImportarPlanilha();
 }
 const abasImport=()=>`
@@ -2144,15 +2170,16 @@ function ligarAbasImport(){
 function renderImportarPlanilha(){
   $('main').innerHTML=`
     <div class="ph">
-      <div><h1>Importar</h1><p>Lançar vários de uma vez</p></div>
+      <div><h1>Importar</h1><p>Lançar vários de uma vez — planilha modelo</p></div>
       <button class="btn btn-s" id="btn-modelo">⬇ Baixar planilha modelo</button>
     </div>
-    ${abasImport()}
     <div class="card" style="margin-bottom:16px">
       <div class="ctitle">Como funciona</div>
       <ol style="margin:0 0 0 18px;font-size:13px;line-height:1.9;color:var(--text-2)">
-        <li>Baixe a planilha modelo e abra no Excel.</li>
-        <li>Cole os lançamentos do extrato, uma linha por lançamento.</li>
+        <li>Boleto, dinheiro e depósito: digite direto na planilha modelo.</li>
+        <li>Extrato Stone ou Sicredi: processe numa conversa com o Claude (aplica bandeira, D+0/D+1,
+          exclui parcelado/falha do Stone; classifica e pergunta o que não reconhece no Sicredi) — ele te devolve
+          as linhas já prontas no formato desta planilha.</li>
         <li>Salve como <strong>CSV</strong> e escolha o arquivo aqui embaixo.</li>
         <li>Confira a prévia e confirme. <strong>A importação só soma</strong> — nada do que já existe é apagado.</li>
       </ol>
@@ -2162,7 +2189,9 @@ function renderImportarPlanilha(){
         <strong>Hora</strong> é opcional (com ela, venda de madrugada conta para a noite anterior); <strong>Conta</strong> em branco assume Sicredi.
         Tipo aceita um terceiro valor, <strong>Transferência</strong> — depósito do caixa no banco: a linha vira duas
         (sai do Dinheiro, entra no Sicredi), sem afetar Categoria/Conta, que são preenchidas sozinhas.
-        Esta planilha é para digitar boletos, vendas e gastos em dinheiro e depósitos — vendas de cartão entram pelo extrato Stone, boletos também podem vir do extrato Sicredi.
+        <strong>Bandeira</strong>, <strong>Valor Líquido</strong>, <strong>Qtd Transações</strong> e <strong>Origem</strong>
+        (Stone/OFX/Manual) também são aceitas, em branco quando não fizer sentido — é o que o Claude preenche
+        ao processar um extrato. Origem em branco vira Manual; só linhas marcadas Stone entram no ticket médio.
       </div>
 
     </div>
@@ -2171,7 +2200,6 @@ function renderImportarPlanilha(){
       <input type="file" id="imp-arquivo" accept=".csv,.txt,text/csv" style="width:100%;padding:10px;border:1.5px dashed var(--border);border-radius:8px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:'Inter',sans-serif;cursor:pointer">
     </div>
     <div id="imp-previa"></div>`;
-  ligarAbasImport();
   $('btn-modelo').addEventListener('click',baixarModeloPlanilha);
   $('imp-arquivo').addEventListener('change',e=>{
     const f=e.target.files&&e.target.files[0];
@@ -2246,19 +2274,19 @@ function mostrarPreviaImport(texto){
     if(!confirm(`Importar ${escolhidas.length} lançamento(s)?\n\nNada do que já está no sistema será alterado.`))return;
     const lancs=getLanc();
     escolhidas.forEach(l=>{
-      const comum={valorBruto:l.valor,valorLiquido:l.valor,bandeira:'',
+      const comum={valorBruto:l.valor,valorLiquido:l.valorLiquido??l.valor,bandeira:l.bandeira||'',
         vencimento:l.venc,dataVenda:l.dataVenda||null,diaOperacional:l.venc,
         dataRecebimento:l.venc,totalParcelas:1,parcelaAtual:1,grupoId:null,
-        pago:l.pago,dataPagamento:l.pago?l.venc:null,qtdTransacoes:1,
+        pago:l.pago,dataPagamento:l.pago?l.venc:null,qtdTransacoes:l.qtd||1,
         cliente:'',showId:null,foraDaAnalise:false,
-        obs:'Importado de planilha',origem:'manual',
+        obs:'Importado de planilha',origem:l.origem||'Manual',
         criadoEm:agora(),atualizadoEm:agora()};
       if(l.tipo==='transferencia'){
         // Duas pernas, igual o depósito detectado no OFX: sai do caixa, entra no banco.
         lancs.push({id:uid('l'),tipo:'pagar',valor:l.valor,descricao:l.descricao||'Depósito do caixa',
-          categoria:CAT_TRANSFER,forma:l.forma||'Dinheiro',conta:'Dinheiro',...comum});
+          categoria:CAT_TRANSFER,forma:l.forma||'Dinheiro',conta:'Dinheiro',...comum,bandeira:'',origem:'Manual'});
         lancs.push({id:uid('l'),tipo:'receber',valor:l.valor,descricao:l.descricao||'Depósito do caixa',
-          categoria:CAT_TRANSFER,forma:l.forma||'Dinheiro',conta:'Sicredi',...comum});
+          categoria:CAT_TRANSFER,forma:l.forma||'Dinheiro',conta:'Sicredi',...comum,bandeira:'',origem:'Manual'});
         return;
       }
       lancs.push({
