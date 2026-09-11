@@ -457,7 +457,7 @@ db.enablePersistence({synchronizeTabs:true}).catch(e=>{
 });
 
 // Chaves que sincronizam com a nuvem. Chave nova só sincroniza se entrar aqui.
-const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','regrasOfx','falhasStone','ofxIgnorados','hist'];
+const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','regrasOfx','falhasStone','ofxIgnorados','hist','mesesFechados'];
 const fsSyncQ={};
 
 // ═══════════════════════════════════════════════
@@ -724,6 +724,25 @@ const getComps=()=>ls.g('comps',[]);
 const setComps=v=>ls.s('comps',v);
 const getRecorrentes=()=>ls.g('recorrentes',[]);
 const setRecorrentes=v=>ls.s('recorrentes',v);
+
+// ═══════════ FECHAMENTO DE MÊS ═══════════
+// Mês fechado trava importação nova e edição dos lançamentos daquele mês.
+// Reabrir é possível, mas sempre com confirmação — não é pra ser sem querer.
+const getMesesFechados=()=>ls.g('mesesFechados',[]);
+const setMesesFechados=v=>ls.s('mesesFechados',v);
+const mesFechado=ym=>getMesesFechados().some(m=>m.ym===ym);
+function fecharMes(ym){
+  const ms=getMesesFechados();
+  if(ms.some(m=>m.ym===ym))return;
+  ms.push({id:'mf_'+ym,ym,fechadoEm:agora(),por:APP.uid?.nome||'—'});
+  setMesesFechados(ms);
+  addHist('Fechou o mês',fmtMesAno(ym));
+}
+function reabrirMes(ym){
+  setMesesFechados(getMesesFechados().filter(m=>m.ym!==ym));
+  addHist('Reabriu o mês',fmtMesAno(ym));
+}
+const fmtMesAno=ym=>{const[y,m]=ym.split('-').map(Number);return new Date(y,m-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});};
 const getHist=()=>ls.g('hist',[]);
 const addHist=(a,r='')=>{const h=getHist();h.unshift({id:uid('h'),u:APP.uid?.nome||'—',a,r,t:agora()});ls.s('hist',h.slice(0,120));};
 
@@ -750,7 +769,11 @@ const CAT_VENDAS='Vendas do dia';
 // Todo lançamento pertence a uma conta, para saber se o dinheiro está no banco
 // ou em espécie. Depósito do caixa no banco é transferência, não faturamento:
 // contar como receita faria a mesma venda entrar duas vezes.
-const CONTAS=['Sicredi','Dinheiro'];
+// CDL: recebível de Cartão Alimentação (Cartão CDL Brumadinho) ainda não
+// repassado pela associação. A venda existe, mas o dinheiro ainda não está no
+// banco — por isso é conta própria, não Sicredi direto. Quando o repasse cai,
+// lança-se Transferência CDL → Sicredi. Saldo que não zera = repasse atrasado.
+const CONTAS=['Sicredi','Dinheiro','CDL'];
 
 // ═══════════ DIA OPERACIONAL ═══════════
 // O bar vende de madrugada. Venda de 01:51 do sábado é faturamento da noite de
@@ -791,9 +814,9 @@ const CATS_FIXAS=[CAT_TAXA,CAT_FATURAMENTO,CAT_TRANSFER,CAT_PESSOAL];
 // contas. O saldo da conta Dinheiro passa a ser real:
 //   vendas lançadas  −  depósitos  −  gastos lançados
 // A importação do Stone não cria mais nenhuma linha de Dinheiro.
-// Reservado para quando o relatório do cartão alimentação entrar; ele não vem
-// no extrato do Stone.
-const TAXA_ALIMENTACAO=3.5;
+// Taxa do Cartão Alimentação é 3,5%, mas o sistema NÃO calcula isso — o Claude
+// entrega Valor Bruto e Valor Líquido já prontos a partir do relatório da CDL,
+// igual faz com o MDR do Stone. Por isso não existe constante de taxa aqui.
 
 // ═══════════ MIGRAÇÃO ═══════════
 // Só acrescenta campo faltando. Nada existente é reescrito nem removido.
@@ -801,7 +824,7 @@ function migrarLancamentos(){
   const lancs=getLanc();let mudou=false;
   lancs.forEach(l=>{
     const antes=JSON.stringify(l);
-    if(l.conta===undefined)l.conta=(l.forma==='Dinheiro')?'Dinheiro':'Sicredi';
+    if(l.conta===undefined)l.conta=(l.forma==='Dinheiro')?'Dinheiro':(l.forma==='Cartão CDL Brumadinho'?'CDL':'Sicredi');
     if(l.valorBruto===undefined)l.valorBruto=l.valor;
     if(l.valorLiquido===undefined)l.valorLiquido=l.valor;
     if(l.qtdTransacoes===undefined)l.qtdTransacoes=1;
@@ -1118,6 +1141,21 @@ function renderPainel(){
       </div>
     </div>
 
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Saldo por conta</div>
+      <div class="fin-kgrid" style="grid-template-columns:repeat(${CONTAS.length},1fr)">
+        ${CONTAS.map(c=>{
+          const da=lancs.filter(l=>l.conta===c&&l.pago);
+          const s=da.reduce((s,l)=>s+(l.tipo==='receber'?l.valor:-l.valor),0);
+          return `<div class="kcard">
+            <div class="kval ${s>=0?'valor-pos':'valor-neg'} num">${esc(fBRL(s))}</div>
+            <div class="klbl">${esc(c)}</div>
+            ${c==='CDL'?'<div class="ksub">recebível — cai no Sicredi quando repassar</div>':''}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
     ${avisos.length?`
     <div class="avisos">
       <div class="ctitle" style="margin-bottom:8px">Precisa de atenção</div>
@@ -1349,6 +1387,7 @@ $('btn-salvar-lanc').addEventListener('click',()=>{
   if(!valor||valor<=0){toast('Informe um valor válido.',true);return;}
   if(!venc){toast('Informe o vencimento.',true);return;}
   if(valor>1000000&&!confirm(`Valor de ${fBRL(valor)} — está certo mesmo?`))return;
+  if(mesFechado(venc.slice(0,7))){toast(`${fmtMesAno(venc.slice(0,7))} está fechado. Reabra em Importar > Fechamento de mês.`,true);return;}
 
   const cat=$('lanc-cat').value,forma=$('lanc-forma').value;
   const obs=v('lanc-obs');
@@ -1357,6 +1396,7 @@ $('btn-salvar-lanc').addEventListener('click',()=>{
   if(id){
     const l=lancs.find(x=>x.id===id);
     if(!l){toast('Lançamento não encontrado.',true);return;}
+    if(mesFechado((l.vencimento||'').slice(0,7))){toast(`${fmtMesAno(l.vencimento.slice(0,7))} está fechado.`,true);return;}
     Object.assign(l,{valor,descricao:desc,categoria:cat,forma,vencimento:venc,obs,atualizadoEm:agora()});
     setLanc(lancs);
     addHist('Editou lançamento: '+desc,fBRL(valor));
@@ -1391,6 +1431,7 @@ function excluirLanc(id){
   const lancs=getLanc();
   const l=lancs.find(x=>x.id===id);
   if(!l)return;
+  if(mesFechado((l.vencimento||'').slice(0,7))){toast(`${fmtMesAno(l.vencimento.slice(0,7))} está fechado.`,true);return;}
   if(l.grupoId){
     const irmas=lancs.filter(x=>x.grupoId===l.grupoId).length;
     if(irmas>1&&confirm(`Este lançamento faz parte de ${irmas} parcelas.\n\nOK = apagar TODAS as parcelas\nCancelar = apagar só esta`)){
@@ -2009,11 +2050,26 @@ const ALIAS_COL={
   forma:['forma','formapagamento','formadepagamento','pagamento','meio'],
   bandeira:['bandeira','band'],
   conta:['conta','banco','contabancaria','caixa'],
-  origem:['origem','fonte'],
   qtd:['qtdtransacoes','qtd','quantidade','qtdtransacao'],
   pago:['pago','quitado','baixado','status','situacao']
 };
-const ORIGENS_VALIDAS=['Stone','OFX','Manual'];
+// Origem NÃO é mais coluna digitada (11/09/2026) — se viesse errada ou em
+// branco, a linha virava Manual e sumia do ticket médio sem erro nenhum
+// aparecer. Agora é derivada de Forma, campo que ninguém erra: ou foi cartão
+// (Stone/CDL), ou foi dinheiro/boleto (Manual). Só linha de venda (Receber)
+// deriva Stone/CDL — um pagamento em PIX não vira "Stone" só por causa da forma.
+// "contém", não "é igual" — cobre tanto "Crédito"/"Débito" (como no pedido do
+// Leo) quanto "Cartão de crédito"/"Cartão de débito" (como já existe no
+// formulário manual do sistema). "cartaoalimentacao" vem antes de
+// "cartao...credito/debito" pra não confundir Cartão Alimentação com cartão comum.
+function derivarOrigem(tipo,forma){
+  if(tipo!=='receber')return 'Manual';
+  if(ehFormaCDL(forma))return 'CDL';
+  const f=chaveCol(forma||'');
+  if(f.includes('credito')||f.includes('debito')||f.includes('pix'))return 'Stone';
+  return 'Manual';
+}
+const ehFormaCDL=forma=>{const f=chaveCol(forma||'');return f.includes('alimentacao')||f.includes('cartaocdl');};
 // "23:40", "23h40", "2340" → {hora:23,min:40}; vazio/ inválido → null
 function lerHoraBR(s){
   const t=String(s??'').trim();
@@ -2062,14 +2118,13 @@ function analisarPlanilha(texto){
     return{erroGeral:'A planilha precisa ter pelo menos as colunas Data e Valor. Baixe o modelo e use o mesmo cabeçalho.'};
 
   const existentes=getLanc();
-  const catsConhecidas=new Set([...CAT_REC,...CAT_PAG]);
   const pega=(l,c)=>idx[c]!==undefined?(l[idx[c]]??''):'';
 
   return{linhas:dados.map((l,n)=>{
     const bruto={
       data:pega(l,'data'),hora:pega(l,'hora'),tipo:pega(l,'tipo'),descricao:pega(l,'descricao'),
       valor:pega(l,'valor'),valorLiquido:pega(l,'valorLiquido'),categoria:pega(l,'categoria'),forma:pega(l,'forma'),
-      bandeira:pega(l,'bandeira'),conta:pega(l,'conta'),origem:pega(l,'origem'),qtd:pega(l,'qtd'),pago:pega(l,'pago')
+      bandeira:pega(l,'bandeira'),conta:pega(l,'conta'),qtd:pega(l,'qtd'),pago:pega(l,'pago')
     };
     const erros=[],avisos=[];
     const dataCal=lerDataBR(bruto.data);
@@ -2082,28 +2137,21 @@ function analisarPlanilha(texto){
       const[y,mo,d]=dataCal.split('-').map(Number);
       venc=diaOperacionalDe({ano:y,mes:mo,dia:d,hora:hm.hora});
     }
-    // Conta: em branco assume Sicredi; valor fora da lista vira aviso, não erro
-    let conta='Sicredi';
-    if(bruto.conta){
-      const achou=CONTAS.find(c=>semAcento(c)===semAcento(bruto.conta));
-      if(achou)conta=achou; else avisos.push('conta desconhecida — usando Sicredi');
-    }
+    // Mês fechado bloqueia a linha inteira, não só avisa
+    if(venc&&mesFechado(venc.slice(0,7)))erros.push(`mês ${venc.slice(0,7)} está fechado`);
+
     let valor=lerValorBR(bruto.valor);
     if(isNaN(valor)||valor===0)erros.push('valor inválido');
-    // Líquido: se a coluna vier vazia (caso comum — boleto, dinheiro), líquido = bruto
+    // Líquido: se a coluna vier vazia (caso comum — boleto, dinheiro), líquido = bruto.
+    // O sistema não calcula taxa nenhuma (MDR do Stone, 3,5% do Cartão Alimentação) —
+    // bruto e líquido vêm prontos de quem processou o extrato.
     let valorLiquido=bruto.valorLiquido?lerValorBR(bruto.valorLiquido):valor;
     if(isNaN(valorLiquido))valorLiquido=valor;
-    // Origem: em branco assume Manual; fora da lista vira aviso, não erro
-    let origem='Manual';
-    if(bruto.origem){
-      const achouOr=ORIGENS_VALIDAS.find(o=>semAcento(o)===semAcento(bruto.origem));
-      if(achouOr)origem=achouOr; else avisos.push('origem desconhecida — usando Manual');
-    }
     const qtd=bruto.qtd?parseInt(bruto.qtd,10):1;
 
     // Tipo: pela coluna quando existe; senão pelo sinal, que é como vem o extrato.
-    // "Transferência" é um terceiro tipo — depósito do caixa no Sicredi, vira
-    // duas pernas na importação (sai do Dinheiro, entra no Sicredi), igual o OFX.
+    // "Transferência" é um terceiro tipo — depósito/repasse virando dinheiro no
+    // banco: a linha vira duas na importação, igual o OFX já fazia sozinho.
     let tipo=null;
     const t=semAcento(bruto.tipo);
     if(/transfer/.test(t))tipo='transferencia';
@@ -2112,11 +2160,27 @@ function analisarPlanilha(texto){
     else if(!isNaN(valor))tipo=valor<0?'pagar':'receber';
     if(!isNaN(valor)){valor=Math.abs(valor);valorLiquido=Math.abs(valorLiquido);}
 
+    // Conta: em branco deriva do contexto — Transferência sai do Dinheiro
+    // (salvo Conta dizer CDL), venda em Cartão Alimentação cai na CDL, resto
+    // assume Sicredi. Valor fora da lista vira aviso, não erro.
+    let conta=tipo==='transferencia'?'Dinheiro':(ehFormaCDL(bruto.forma)?'CDL':'Sicredi');
+    if(bruto.conta){
+      const achou=CONTAS.find(c=>semAcento(c)===semAcento(bruto.conta));
+      if(achou)conta=achou; else avisos.push(`conta desconhecida — usando ${conta}`);
+    }
+
+    // Origem NÃO se digita — deriva de Tipo+Forma (ver derivarOrigem acima).
+    const origem=tipo==='transferencia'?'Manual':derivarOrigem(tipo,bruto.forma);
+
     const descricao=bruto.descricao||'(sem descrição)';
     if(!bruto.descricao)avisos.push('sem descrição');
 
+    // Categoria: lista fechada. Fora dela é ERRO — a linha não entra, evita
+    // "Custo dos Produtos" e "Custo de Produtos" virando duas categorias.
+    // Transferência tem a categoria preenchida sozinha, não passa por aqui.
     const categoria=bruto.categoria||'';
-    if(categoria&&!catsConhecidas.has(categoria))avisos.push('categoria nova');
+    if(tipo!=='transferencia'&&categoria&&!CATS_FECHADAS.includes(categoria))
+      erros.push(`categoria "${categoria}" não está na lista`);
 
     const p=semAcento(bruto.pago);
     const pago=/^(sim|s|x|true|1|pago|quitado|baixado)$/.test(p);
@@ -2167,6 +2231,24 @@ function ligarAbasImport(){
   }));
 }
 
+function renderFechamentoMes(){
+  const ms=getMesesFechados().slice().sort((a,b)=>b.ym.localeCompare(a.ym));
+  const box=$('fm-lista');
+  if(!box)return;
+  box.innerHTML=ms.length?ms.map(m=>`
+    <div class="flex justify-between items-center" style="padding:7px 0;border-bottom:1px solid var(--border)">
+      <div><strong style="text-transform:capitalize">${esc(fmtMesAno(m.ym))}</strong>
+        <div class="text-sm text-muted">fechado por ${esc(m.por)} em ${esc(fmtData(m.fechadoEm.slice(0,10)))}</div></div>
+      <button class="btn btn-sm btn-s" data-reabrir="${esc(m.ym)}">Reabrir</button>
+    </div>`).join(''):'<div class="text-sm text-muted">Nenhum mês fechado ainda.</div>';
+  box.querySelectorAll('[data-reabrir]').forEach(b=>b.addEventListener('click',()=>{
+    const ym=b.dataset.reabrir;
+    if(!confirm(`Reabrir ${fmtMesAno(ym)}?\n\nVolta a aceitar importação e edição nesse mês.`))return;
+    reabrirMes(ym);renderFechamentoMes();
+    toast(`${fmtMesAno(ym)} reaberto.`);
+  }));
+}
+
 function renderImportarPlanilha(){
   $('main').innerHTML=`
     <div class="ph">
@@ -2186,14 +2268,30 @@ function renderImportarPlanilha(){
       <div class="text-sm text-muted" style="margin-top:12px">
         Colunas: ${COLUNAS_MODELO.join(' · ')}. Só <strong>Data</strong> e <strong>Valor</strong> são obrigatórias.
         Sem a coluna Tipo, valor negativo vira saída e positivo vira entrada, que é como o extrato costuma vir.
-        <strong>Hora</strong> é opcional (com ela, venda de madrugada conta para a noite anterior); <strong>Conta</strong> em branco assume Sicredi.
-        Tipo aceita um terceiro valor, <strong>Transferência</strong> — depósito do caixa no banco: a linha vira duas
-        (sai do Dinheiro, entra no Sicredi), sem afetar Categoria/Conta, que são preenchidas sozinhas.
-        <strong>Bandeira</strong>, <strong>Valor Líquido</strong>, <strong>Qtd Transações</strong> e <strong>Origem</strong>
-        (Stone/OFX/Manual) também são aceitas, em branco quando não fizer sentido — é o que o Claude preenche
-        ao processar um extrato. Origem em branco vira Manual; só linhas marcadas Stone entram no ticket médio.
+        <strong>Hora</strong> é opcional (com ela, venda de madrugada conta para a noite anterior); <strong>Conta</strong> em branco
+        deriva da Forma (Cartão CDL Brumadinho/Cartão Alimentação → CDL, senão Sicredi).
+        Tipo aceita um terceiro valor, <strong>Transferência</strong> — depósito/repasse virando dinheiro no banco: a linha vira
+        duas (sai de Dinheiro ou CDL, entra no Sicredi), sem afetar Categoria/Conta, que são preenchidas sozinhas.
+        <strong>Bandeira</strong>, <strong>Valor Líquido</strong> e <strong>Qtd Transações</strong> também são aceitas, em branco
+        quando não fizer sentido (boleto, dinheiro) — é o que o Claude preenche ao processar um extrato de cartão. O sistema
+        não calcula taxa nenhuma: bruto e líquido vêm prontos.
+        <strong>Origem não é mais coluna</strong> — o sistema deriva de Forma: Crédito/Débito/PIX → Stone, Cartão
+        Alimentação → CDL (essas entram no ticket médio), Dinheiro/Boleto → Manual (fora do ticket médio).
+        <strong>Categoria</strong> é lista fechada — fora dela a linha não entra, pra "Custo dos Produtos" não virar
+        duas categorias por causa de acento ou espaço.
       </div>
 
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Fechamento de mês</div>
+      <div class="text-sm text-muted" style="margin-bottom:10px">
+        Mês fechado bloqueia importação nova e edição dos lançamentos daquele mês. Reabrir pede confirmação.
+      </div>
+      <div id="fm-lista"></div>
+      <div class="flex gap8" style="margin-top:10px;flex-wrap:wrap">
+        <input id="fm-mes" type="month" value="${ymAtual()}" style="padding:8px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px">
+        <button class="btn btn-s btn-sm" id="btn-fechar-mes">Fechar este mês</button>
+      </div>
     </div>
     <div class="card" style="margin-bottom:16px">
       <div class="ctitle">Escolher arquivo</div>
@@ -2201,6 +2299,15 @@ function renderImportarPlanilha(){
     </div>
     <div id="imp-previa"></div>`;
   $('btn-modelo').addEventListener('click',baixarModeloPlanilha);
+  renderFechamentoMes();
+  $('btn-fechar-mes').addEventListener('click',()=>{
+    const ym=$('fm-mes').value;
+    if(!ym){toast('Escolha um mês.',true);return;}
+    if(mesFechado(ym)){toast('Esse mês já está fechado.',true);return;}
+    if(!confirm(`Fechar ${fmtMesAno(ym)}?\n\nNenhum lançamento novo ou edição vai entrar nesse mês até reabrir.`))return;
+    fecharMes(ym);renderFechamentoMes();
+    toast(`${fmtMesAno(ym)} fechado.`);
+  });
   $('imp-arquivo').addEventListener('change',e=>{
     const f=e.target.files&&e.target.files[0];
     if(!f)return;
@@ -2229,7 +2336,30 @@ function mostrarPreviaImport(texto){
   const comErro=linhasImport.filter(l=>l.erros.length);
   const dups=validas.filter(l=>l.dup).length;
 
+  // Bate o total do arquivo, por forma, contra o total que o Claude informou
+  // (vindo do extrato original). Pega linha perdida no caminho, não só erro de
+  // classificação. Só pra vendas (Receber) — é o que tem "total do extrato".
+  const formasArquivo=[...new Set(validas.filter(l=>l.tipo==='receber'&&l.forma).map(l=>l.forma))];
+  const somaPorForma=f=>validas.filter(l=>l.tipo==='receber'&&l.forma===f&&!l.dup).reduce((s,l)=>s+l.valor,0);
+  let conferido=formasArquivo.length===0;
+
   box.innerHTML=`
+    ${formasArquivo.length?`
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Bater com o total do extrato</div>
+      <div class="text-sm text-muted" style="margin-bottom:10px">
+        Digite o total que veio junto do extrato (Stone ou relatório da CDL), por forma. Se não bater,
+        a importação fica bloqueada — pega linha que ficou pra trás no caminho.
+      </div>
+      ${formasArquivo.map(f=>`
+        <div class="flex justify-between items-center gap8" style="padding:6px 0">
+          <span style="flex:1">${esc(f)} <span class="text-sm text-muted">(arquivo soma ${esc(fBRL(somaPorForma(f)))})</span></span>
+          <input type="text" inputmode="decimal" class="conf-forma" data-forma="${esc(f)}" placeholder="total informado"
+            style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
+        </div>`).join('')}
+      <div id="conf-resultado" class="text-sm" style="margin-top:10px"></div>
+      <button class="btn btn-s btn-sm" id="btn-conferir" style="margin-top:8px">Conferir totais</button>
+    </div>`:''}
     <div class="card">
       <div class="ctitle">Conferência</div>
       <div class="fin-kgrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
@@ -2250,7 +2380,7 @@ function mostrarPreviaImport(texto){
                 :l.tipo?`<span class="bdg ${l.tipo==='receber'?'bv':'bvm'}">${l.tipo==='receber'?'Entrada':'Saída'}</span>`:'—'}</td>
               <td>${esc(l.descricao)}</td>
               <td>${l.tipo==='transferencia'?esc(CAT_TRANSFER):(esc(l.categoria)||'—')}</td>
-              <td class="text-sm">${l.tipo==='transferencia'?'Dinheiro → Sicredi':esc(l.conta||'Sicredi')}</td>
+              <td class="text-sm">${l.tipo==='transferencia'?esc(l.conta)+' → Sicredi':esc(l.conta||'Sicredi')}</td>
               <td class="num fw6 ${l.tipo==='receber'?'valor-rec':'valor-pag'}" style="text-align:right">${isNaN(l.valor)?'—':esc(fBRL(l.valor))}</td>
               <td class="text-sm">${l.erros.length
                 ?`<span style="color:var(--erro)">${esc(l.erros.join(', '))}</span>`
@@ -2259,16 +2389,44 @@ function mostrarPreviaImport(texto){
         </table>
       </div>
       <div class="flex gap8" style="margin-top:16px;flex-wrap:wrap">
-        <button class="btn btn-p" id="btn-importar">Importar selecionados</button>
+        <button class="btn btn-p" id="btn-importar" ${conferido?'':'disabled'}>Importar selecionados</button>
         <button class="btn btn-s" id="btn-marcar-todos">Marcar todos</button>
         <button class="btn btn-s" id="btn-desmarcar">Desmarcar todos</button>
       </div>
+      ${formasArquivo.length?'<div class="text-sm text-muted" style="margin-top:8px">Confira os totais acima antes de importar.</div>':''}
     </div>`;
 
   const cks=()=>Array.from(box.querySelectorAll('.imp-ck'));
   $('btn-marcar-todos').addEventListener('click',()=>cks().forEach(c=>c.checked=true));
   $('btn-desmarcar').addEventListener('click',()=>cks().forEach(c=>c.checked=false));
+  if($('btn-conferir')){
+    $('btn-conferir').addEventListener('click',()=>{
+      const inputs=Array.from(box.querySelectorAll('.conf-forma'));
+      const diffs=[];
+      let faltando=false;
+      inputs.forEach(inp=>{
+        const f=inp.dataset.forma;
+        const digitado=lerValorBR(inp.value);
+        if(inp.value.trim()===''||isNaN(digitado)){faltando=true;return;}
+        const real=somaPorForma(f);
+        if(Math.abs(real-digitado)>=0.01)diffs.push(`${f}: arquivo ${fBRL(real)} × informado ${fBRL(digitado)} (diferença ${fBRL(real-digitado)})`);
+      });
+      const res=$('conf-resultado');
+      if(faltando){
+        res.innerHTML='<span style="color:var(--amber)">Preencha o total de todas as formas.</span>';
+        conferido=false;
+      }else if(diffs.length){
+        res.innerHTML='<span style="color:var(--erro)">Não bateu — importação bloqueada até corrigir o arquivo:<br>'+diffs.map(esc).join('<br>')+'</span>';
+        conferido=false;
+      }else{
+        res.innerHTML='<span style="color:var(--ok)">Bateu certinho. Pode importar.</span>';
+        conferido=true;
+      }
+      $('btn-importar').disabled=!conferido;
+    });
+  }
   $('btn-importar').addEventListener('click',()=>{
+    if(!conferido){toast('Confira os totais antes de importar.',true);return;}
     const escolhidas=cks().filter(c=>c.checked).map(c=>linhasImport[parseInt(c.dataset.i)]);
     if(!escolhidas.length){toast('Nenhuma linha selecionada.',true);return;}
     if(!confirm(`Importar ${escolhidas.length} lançamento(s)?\n\nNada do que já está no sistema será alterado.`))return;
@@ -2282,11 +2440,14 @@ function mostrarPreviaImport(texto){
         obs:'Importado de planilha',origem:l.origem||'Manual',
         criadoEm:agora(),atualizadoEm:agora()};
       if(l.tipo==='transferencia'){
-        // Duas pernas, igual o depósito detectado no OFX: sai do caixa, entra no banco.
-        lancs.push({id:uid('l'),tipo:'pagar',valor:l.valor,descricao:l.descricao||'Depósito do caixa',
-          categoria:CAT_TRANSFER,forma:l.forma||'Dinheiro',conta:'Dinheiro',...comum,bandeira:'',origem:'Manual'});
-        lancs.push({id:uid('l'),tipo:'receber',valor:l.valor,descricao:l.descricao||'Depósito do caixa',
-          categoria:CAT_TRANSFER,forma:l.forma||'Dinheiro',conta:'Sicredi',...comum,bandeira:'',origem:'Manual'});
+        // Duas pernas, igual o depósito/repasse detectado no OFX: sai da conta de
+        // origem (Dinheiro ou CDL — vem de l.conta), entra no Sicredi.
+        const origemConta=l.conta==='CDL'?'CDL':'Dinheiro';
+        const desc=l.descricao||(origemConta==='CDL'?'Repasse CDL':'Depósito do caixa');
+        lancs.push({id:uid('l'),tipo:'pagar',valor:l.valor,descricao:desc,
+          categoria:CAT_TRANSFER,forma:l.forma||origemConta,conta:origemConta,...comum,bandeira:'',origem:'Manual'});
+        lancs.push({id:uid('l'),tipo:'receber',valor:l.valor,descricao:desc,
+          categoria:CAT_TRANSFER,forma:l.forma||origemConta,conta:'Sicredi',...comum,bandeira:'',origem:'Manual'});
         return;
       }
       lancs.push({
@@ -2462,10 +2623,21 @@ function previaStone(texto){
 // somam R$ 107.407,50 contra R$ 107.407,98 de venda bruta no Stone. Lançar as
 // duas coisas dobraria o faturamento inteiro.
 const CATS_CUSTO=['Prolabore (Jane)','Prolabore (Wanderley)','Prolabore (Leo)',
-  'Atração','Freelance','Salário','Custo dos Produtos','Descartáveis','Utensílios',
+  'Atração','Freelance','Salário (Maria)','Custo dos Produtos','Descartáveis','Utensílios',
   'Investimentos','FGTS','Gasolina','CDL Brumadinho','Abrasel','Juros bancários',
   'Simples Nacional','Dedetização','Sistema Connectplug','Contabilidade','Água',
   'Luz (casa)','Luz (bar)','Manutenção Equipamentos','Marketing','Internet'];
+
+// Lista fechada para a importação por planilha (11/09/2026): categoria fora
+// daqui é ERRO, não aviso — "Custo dos Produtos" e "Custo de Produtos" não
+// podem virar duas categorias por causa de um espaço digitado errado.
+// CDL Brumadinho (categoria — mensalidade da associação) não é a mesma coisa
+// que a conta CDL (recebível de Cartão Alimentação): nomes parecidos, coisas
+// opostas, não unificar.
+const CATS_FECHADAS_REC=[CAT_FATURAMENTO];
+const CATS_FECHADAS_PAG=[...CATS_CUSTO,CAT_INSUMOS];
+const CATS_FECHADAS_NEUTRAS=[CAT_TRANSFER,CAT_PESSOAL];
+const CATS_FECHADAS=[...CATS_FECHADAS_REC,...CATS_FECHADAS_PAG,...CATS_FECHADAS_NEUTRAS];
 
 // Normaliza para casar grafias diferentes do mesmo nome: o extrato traz
 // "IFOOD,COM AGENCIA" e "IFOOD COM AGENCIA", "LEONARDO FERNANDES" e "Leonardo
@@ -2517,7 +2689,7 @@ const REGRAS_OFX_BASE=[
   {m:'vitor gabriel',cat:'Freelance'},{m:'andreia luiza silva faria',cat:'Freelance',obs:'Leandro'},
   {m:'luana prado',cat:'Freelance'},{m:'leandro guilherme',cat:'Freelance'},
   {m:'vitoria emanuele',cat:'Freelance'},
-  {m:'maria do socorro',cat:'Salário'},
+  {m:'maria do socorro',cat:'Salário (Maria)'},
   {m:'rubens silvestre',cat:'Custo dos Produtos',obs:'Cigarro'},
   {m:'bebidas brumadinho',cat:'Custo dos Produtos',obs:'Bebrum'},
   {m:'comercial silva',cat:'Custo dos Produtos',obs:'Bhzão Atacado e Varejo'},
@@ -2812,10 +2984,11 @@ function previaOfx(resolvidos){
 // ═══════════════════════════════════════════════
 // ANÁLISES
 // ═══════════════════════════════════════════════
-// Base: só venda pelo Stone. Ficam de fora o uso pessoal (passa pelo CNPJ mas
-// não é venda), as falhas (nem viraram lançamento) e o dinheiro lançado à mão
-// (não tem hora nem bandeira para análise de cliente). Misturar distorce o
-// ticket médio.
+// Base: venda individual rastreável — Stone (Crédito/Débito/PIX) e CDL
+// (Cartão Alimentação). Fica de fora o uso pessoal (passa pelo CNPJ mas não é
+// venda), as falhas (nem viraram lançamento) e o que é lançado agregado à mão
+// (Dinheiro, Boleto — não tem hora nem bandeira pra análise de cliente).
+// Misturar distorce o ticket médio.
 const horaDoLanc=l=>l.dataVenda?parseInt(l.dataVenda.slice(11,13)):null;
 
 function semanaAtual(){
@@ -2832,10 +3005,14 @@ function filtrosAnalise(){
   return APP.analise;
 }
 
+// Venda individual rastreável: Stone (Crédito/Débito/PIX) ou CDL (Cartão
+// Alimentação). Fica fora Dinheiro/Boleto (Manual) e Transferência.
+const vendaRastreavel=l=>l.tipo==='receber'&&(l.origem==='Stone'||l.origem==='CDL');
+
 function baseAnalise(){
   const f=filtrosAnalise();
   return getLanc().filter(l=>{
-    if(l.origem!=='Stone'||l.foraDaAnalise||l.tipo!=='receber')return false;
+    if(!vendaRastreavel(l)||l.foraDaAnalise)return false;
     if(!l.diaOperacional||l.diaOperacional<f.de||l.diaOperacional>f.ate)return false;
     if(f.forma&&l.forma!==f.forma)return false;
     if(f.bandeira&&(l.bandeira||'')!==f.bandeira)return false;
@@ -2893,12 +3070,12 @@ function renderAnalises(){
   const comShow=dias.filter(d=>diasShow.has(d)),semShow=dias.filter(d=>!diasShow.has(d));
   const mediaDe=arr=>arr.length?arr.reduce((s,d)=>s+porDia[d],0)/arr.length:0;
 
-  const formasUsadas=[...new Set(getLanc().filter(l=>l.origem==='Stone').map(l=>l.forma).filter(Boolean))];
-  const bandsUsadas=[...new Set(getLanc().filter(l=>l.origem==='Stone').map(l=>l.bandeira).filter(Boolean))];
+  const formasUsadas=[...new Set(getLanc().filter(vendaRastreavel).map(l=>l.forma).filter(Boolean))];
+  const bandsUsadas=[...new Set(getLanc().filter(vendaRastreavel).map(l=>l.bandeira).filter(Boolean))];
 
   $('main').innerHTML=`
     <div class="ph">
-      <div><h1>Análises</h1><p>Só venda pelo Stone — dinheiro lançado à mão e uso pessoal ficam de fora</p></div>
+      <div><h1>Análises</h1><p>Venda individual rastreável (Stone e CDL) — dinheiro, boleto e uso pessoal ficam de fora</p></div>
     </div>
 
     <div class="card" style="margin-bottom:16px">
@@ -3012,7 +3189,7 @@ function renderAnalises(){
     else if(b.dataset.per==='mes'){a.de=hoje.slice(0,7)+'-01';a.ate=hoje;}
     else if(b.dataset.per==='mesant'){const m=somaMes(hoje.slice(0,7),-1);
       const[y,mm]=m.split('-').map(Number);a.de=m+'-01';a.ate=m+'-'+String(new Date(y,mm,0).getDate()).padStart(2,'0');}
-    else{const ds=getLanc().filter(l=>l.origem==='Stone'&&l.diaOperacional).map(l=>l.diaOperacional).sort();
+    else{const ds=getLanc().filter(l=>vendaRastreavel(l)&&l.diaOperacional).map(l=>l.diaOperacional).sort();
       a.de=ds[0]||hoje;a.ate=ds[ds.length-1]||hoje;}
     renderAnalises();
   }));
@@ -3186,7 +3363,8 @@ function renderExportar(){
       const sai=da.filter(l=>l.tipo==='pagar').reduce((s,l)=>s+(l.valorBruto??l.valor??0),0);
       linhas.push([c,ent.toFixed(2).replace('.',','),sai.toFixed(2).replace('.',','),
         (ent-sai).toFixed(2).replace('.',','),
-        c==='Dinheiro'?'saldo real: vendas e gastos lançados à mão, menos depósitos':''].map(csvSeguro).join(';'));
+        c==='Dinheiro'?'saldo real: vendas e gastos lançados à mão, menos depósitos':
+        c==='CDL'?'recebível de Cartão Alimentação ainda não repassado — não deveria acumular':''].map(csvSeguro).join(';'));
     });
     baixar(`komboza-saldo-${sufixo()}.csv`,'﻿'+linhas.join('\r\n'),'text/csv;charset=utf-8;');
     toast('Saldo exportado.');
