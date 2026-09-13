@@ -2060,6 +2060,17 @@ function lerCSV(texto){
 }
 
 const chaveCol=s=>semAcento(s).replace(/[^a-z0-9]/g,'');
+// Categoria válida = está cadastrada na tela Categorias (CAT_REC/CAT_PAG, que
+// vêm de getCats() via reloadCats()), comparando por chaveCol — ignora maiúscula/
+// minúscula, espaço e acento. Antes isso comparava contra uma lista fixa no
+// código (CATS_FECHADAS), que não incluía categorias novas cadastradas pela
+// tela (ex.: "Aporte Sócio (Leo)", "Locação de Equipamento") nem pegava "Aluguel "
+// com espaço — cadastro e validação precisam usar a MESMA fonte.
+function categoriaCanonica(nome){
+  if(!nome)return null;
+  const chave=chaveCol(nome);
+  return [...CAT_REC,...CAT_PAG].find(c=>chaveCol(c)===chave)||null;
+}
 // Desde que a importação direta de Stone/OFX saiu da interface (10/09/2026),
 // quem faz esse trabalho é uma conversa com o Claude fora do sistema — e o
 // resultado vira linha nesta mesma planilha. Por isso ela também aceita, de
@@ -2139,7 +2150,32 @@ function lerDataBR(s){
 
 let linhasImport=[];
 
-function analisarPlanilha(texto){
+// Linha opcional no próprio CSV, tipo:
+//   #RESUMO;4035;132241,88;156687,92;4865,16
+// (linhas;total Receber;total Pagar;total Transferência) — é o que o Claude
+// escreve junto do arquivo. O sistema lê sozinho e compara com o que ele
+// mesmo somou do arquivo: nenhum campo pra digitar, nenhuma conferência manual
+// (ajuste pedido pelo Leo em 13/09/2026 — a versão anterior pedia pra
+// redigitar os totais na tela, e isso era exatamente o trabalho manual que a
+// conferência deveria eliminar).
+function extrairResumoArquivo(texto){
+  const linhas=texto.replace(/^﻿/,'').split(/\r\n|\n|\r/);
+  const i=linhas.findIndex(l=>/^#\s*resumo/i.test(l.trim()));
+  if(i<0)return{resumo:null,texto};
+  // só ';' — vírgula é separador decimal aqui (150,00), não de campo
+  const partes=linhas[i].split(';').map(x=>x.trim());
+  const resumo={
+    linhas:parseInt(partes[1],10),
+    receber:lerValorBR(partes[2]),
+    pagar:lerValorBR(partes[3]),
+    transferencia:partes[4]!==undefined?lerValorBR(partes[4]):0
+  };
+  linhas.splice(i,1);
+  return{resumo,texto:linhas.join('\r\n')};
+}
+
+function analisarPlanilha(textoOriginal){
+  const{resumo,texto}=extrairResumoArquivo(textoOriginal);
   const {cabecalho,dados}=lerCSV(texto);
   if(!cabecalho.length)return{erroGeral:'Arquivo vazio.'};
   const idx={};
@@ -2216,12 +2252,17 @@ function analisarPlanilha(texto){
     const descricao=bruto.descricao||'(sem descrição)';
     if(!bruto.descricao)avisos.push('sem descrição');
 
-    // Categoria: lista fechada. Fora dela é ERRO — a linha não entra, evita
-    // "Custo dos Produtos" e "Custo de Produtos" virando duas categorias.
-    // Transferência tem a categoria preenchida sozinha, não passa por aqui.
-    const categoria=bruto.categoria||'';
-    if(tipo!=='transferencia'&&categoria&&!CATS_FECHADAS.includes(categoria))
-      erros.push(`categoria "${categoria}" não está na lista`);
+    // Categoria: precisa ser uma das cadastradas (tela Categorias), comparando
+    // sem diferenciar maiúscula/minúscula, espaço nas pontas ou acento — "Aluguel"
+    // e "aluguel " (com espaço) são a mesma categoria. Fora da lista é ERRO — a
+    // linha não entra, evita "Custo dos Produtos" e "Custo de Produtos" virando
+    // duas categorias por causa de uma letra. Transferência tem a categoria
+    // preenchida sozinha, não passa por aqui.
+    const categoriaDigitada=bruto.categoria||'';
+    const categoriaOk=categoriaDigitada?categoriaCanonica(categoriaDigitada):'';
+    const categoria=categoriaDigitada?(categoriaOk||''):'';
+    if(tipo!=='transferencia'&&categoriaDigitada&&!categoriaOk)
+      erros.push(`categoria "${categoriaDigitada}" não está cadastrada`);
 
     const p=semAcento(bruto.pago);
     const pago=/^(sim|s|x|true|1|pago|quitado|baixado)$/.test(p);
@@ -2236,7 +2277,7 @@ function analisarPlanilha(texto){
     return{n:n+2,venc,dataVenda,conta,tipo,descricao,valor,valorLiquido,categoria,chave,
       forma:bruto.forma||'',bandeira:bruto.bandeira||'',origem,qtd:isNaN(qtd)||qtd<1?1:qtd,
       pago,erros,avisos,dup};
-  })};
+  }),resumo};
 }
 
 // Marca linhas repetidas DENTRO do próprio arquivo (colar duas vezes por
@@ -2345,14 +2386,17 @@ function renderImportarPlanilha(){
         não calcula taxa nenhuma: bruto e líquido vêm prontos.
         <strong>Origem não é mais coluna</strong> — o sistema deriva de Forma: Crédito/Débito/PIX → Stone, Cartão
         Alimentação → CDL (essas entram no ticket médio), Dinheiro/Boleto → Manual (fora do ticket médio).
-        <strong>Categoria</strong> é lista fechada — fora dela a linha não entra, pra "Custo dos Produtos" não virar
-        duas categorias por causa de acento ou espaço.
+        <strong>Categoria</strong> precisa ser uma das cadastradas na tela Categorias — fora dela a linha vira erro.
+        A comparação ignora maiúscula/minúscula e espaço nas pontas ("Aluguel" e "aluguel " são a mesma).
         <strong>Chave</strong> (STONE ID, FITID, ou qualquer id que não se repete) é o que define duplicata — sem ela,
         a linha nunca é tratada como repetida, mesmo que pareça igual a outra (vendas de mesmo valor no mesmo
         dia são clientes diferentes, não repetição). Se a chave já existir no sistema, a linha é ignorada
         silenciosamente — não entra pra revisão, só é contada no resumo depois de importar.
         <strong>A importação é tudo ou nada:</strong> se sobrar qualquer erro no arquivo, nada é importado —
         corrija o CSV e reenvie.
+        <strong>Conferência automática:</strong> se o arquivo tiver uma linha <code>#RESUMO;linhas;receber;pagar;transferência</code>
+        (o Claude inclui isso ao processar um extrato), o sistema compara sozinho com o que ele mesmo leu do
+        arquivo — nada pra digitar. Sem essa linha, a conferência é só pulada.
       </div>
 
     </div>
@@ -2421,18 +2465,26 @@ function mostrarPreviaImport(texto,nomeArquivo){
   // do Leo). Vem do próprio texto do erro de categoria.
   const catsFaltando={};
   comErro.forEach(l=>l.erros.forEach(e=>{
-    const m=e.match(/^categoria "(.+)" não está na lista$/);
+    const m=e.match(/^categoria "(.+)" não está cadastrada$/);
     if(m)(catsFaltando[m[1]]=catsFaltando[m[1]]||[]).push(l.n);
   }));
 
   // Resumo interno do arquivo — não contra o extrato original (nunca bate,
   // muita coisa é legitimamente excluída/transformada no caminho), e sim
-  // contra o que o próprio Claude relatou ter mandado. Pega linha perdida no
-  // processo, não erro de classificação.
-  const temTransf=linhasImport.some(l=>l.tipo==='transferencia');
+  // contra o que o próprio Claude relatou ter mandado, na linha #RESUMO do
+  // CSV (ver extrairResumoArquivo). Automático — nada pra digitar. Pega linha
+  // perdida no processo, não erro de classificação. Sem #RESUMO no arquivo,
+  // segue sem essa checagem (fica só o texto avisando).
   const somaTipo=t=>linhasImport.filter(l=>l.tipo===t).reduce((s,l)=>s+(l.valor||0),0);
   const totLinhas=linhasImport.length,totRec=somaTipo('receber'),totPag=somaTipo('pagar'),totTransf=somaTipo('transferencia');
-  let conferido=false;
+  const diffsResumo=[];
+  if(r.resumo){
+    if(r.resumo.linhas!==totLinhas)diffsResumo.push(`Linhas: arquivo tem ${totLinhas}, resumo diz ${r.resumo.linhas}`);
+    if(isNaN(r.resumo.receber)||Math.abs(totRec-r.resumo.receber)>=0.01)diffsResumo.push(`Receber: arquivo soma ${fBRL(totRec)}, resumo diz ${isNaN(r.resumo.receber)?'—':fBRL(r.resumo.receber)}`);
+    if(isNaN(r.resumo.pagar)||Math.abs(totPag-r.resumo.pagar)>=0.01)diffsResumo.push(`Pagar: arquivo soma ${fBRL(totPag)}, resumo diz ${isNaN(r.resumo.pagar)?'—':fBRL(r.resumo.pagar)}`);
+    if(Math.abs(totTransf-(r.resumo.transferencia||0))>=0.01)diffsResumo.push(`Transferência: arquivo soma ${fBRL(totTransf)}, resumo diz ${fBRL(r.resumo.transferencia||0)}`);
+  }
+  const conferido=!r.resumo||diffsResumo.length===0;
 
   box.innerHTML=`
     ${comErro.length?`
@@ -2461,33 +2513,14 @@ function mostrarPreviaImport(texto,nomeArquivo){
     </div>`:''}
     <div class="card" style="margin-bottom:16px">
       <div class="ctitle">Bater com o resumo do arquivo</div>
-      <div class="text-sm text-muted" style="margin-bottom:10px">
-        Digite o resumo que o Claude te passou junto com o CSV. Se não bater com o que o sistema leu do
-        arquivo, a importação fica bloqueada — pega linha que se perdeu no caminho.
-      </div>
-      <div class="flex justify-between items-center gap8" style="padding:6px 0">
-        <span style="flex:1">Linhas <span class="text-sm text-muted">(arquivo tem ${totLinhas})</span></span>
-        <input type="text" inputmode="numeric" id="conf-linhas" placeholder="linhas informadas"
-          style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
-      </div>
-      <div class="flex justify-between items-center gap8" style="padding:6px 0">
-        <span style="flex:1">Receber <span class="text-sm text-muted">(arquivo soma ${esc(fBRL(totRec))})</span></span>
-        <input type="text" inputmode="decimal" id="conf-receber" placeholder="total informado"
-          style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
-      </div>
-      <div class="flex justify-between items-center gap8" style="padding:6px 0">
-        <span style="flex:1">Pagar <span class="text-sm text-muted">(arquivo soma ${esc(fBRL(totPag))})</span></span>
-        <input type="text" inputmode="decimal" id="conf-pagar" placeholder="total informado"
-          style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
-      </div>
-      ${temTransf?`
-      <div class="flex justify-between items-center gap8" style="padding:6px 0">
-        <span style="flex:1">Transferência <span class="text-sm text-muted">(arquivo soma ${esc(fBRL(totTransf))})</span></span>
-        <input type="text" inputmode="decimal" id="conf-transf" placeholder="total informado"
-          style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
-      </div>`:''}
-      <div id="conf-resultado" class="text-sm" style="margin-top:10px"></div>
-      <button class="btn btn-s btn-sm" id="btn-conferir" style="margin-top:8px" ${comErro.length?'disabled':''}>Conferir</button>
+      ${r.resumo?`
+        <div class="text-sm" style="color:${diffsResumo.length?'var(--erro)':'var(--ok)'}">
+          ${diffsResumo.length
+            ?'<strong>Não bateu — importação bloqueada até corrigir o arquivo:</strong><br>'+diffsResumo.map(esc).join('<br>')
+            :'Bateu certinho com a linha #RESUMO do arquivo.'}
+        </div>`
+        :`<div class="text-sm text-muted">Este arquivo não tem uma linha <code>#RESUMO</code> — a conferência automática foi pulada.
+           Peça pro Claude incluir <code>#RESUMO;linhas;receber;pagar;transferência</code> no CSV.</div>`}
     </div>
     <div class="card">
       <div class="ctitle">Resumo</div>
@@ -2517,36 +2550,10 @@ function mostrarPreviaImport(texto,nomeArquivo){
         </table>
       </div>
       <div class="flex gap8" style="margin-top:16px;flex-wrap:wrap">
-        <button class="btn btn-p" id="btn-importar" disabled>Importar tudo</button>
+        <button class="btn btn-p" id="btn-importar" ${(conferido&&!comErro.length)?'':'disabled'}>Importar tudo</button>
       </div>
-      <div class="text-sm text-muted" style="margin-top:8px">${comErro.length?'Corrija os erros acima antes de importar.':'Confira o resumo acima antes de importar.'}</div>
+      <div class="text-sm text-muted" style="margin-top:8px">${comErro.length?'Corrija os erros acima antes de importar.':(conferido?'':'O resumo do arquivo não bateu — corrija antes de importar.')}</div>
     </div>`;
-
-  $('btn-conferir').addEventListener('click',()=>{
-    const nLinhas=parseInt(v('conf-linhas'),10);
-    const nRec=lerValorBR(v('conf-receber'));
-    const nPag=lerValorBR(v('conf-pagar'));
-    const nTransf=temTransf?lerValorBR(v('conf-transf')):totTransf;
-    const res=$('conf-resultado');
-    if(isNaN(nLinhas)||isNaN(nRec)||isNaN(nPag)||(temTransf&&isNaN(nTransf))){
-      res.innerHTML='<span style="color:var(--amber)">Preencha todos os campos.</span>';
-      conferido=false;
-    }else{
-      const diffs=[];
-      if(nLinhas!==totLinhas)diffs.push(`Linhas: arquivo ${totLinhas} × informado ${nLinhas}`);
-      if(Math.abs(totRec-nRec)>=0.01)diffs.push(`Receber: arquivo ${fBRL(totRec)} × informado ${fBRL(nRec)} (diferença ${fBRL(totRec-nRec)})`);
-      if(Math.abs(totPag-nPag)>=0.01)diffs.push(`Pagar: arquivo ${fBRL(totPag)} × informado ${fBRL(nPag)} (diferença ${fBRL(totPag-nPag)})`);
-      if(temTransf&&Math.abs(totTransf-nTransf)>=0.01)diffs.push(`Transferência: arquivo ${fBRL(totTransf)} × informado ${fBRL(nTransf)} (diferença ${fBRL(totTransf-nTransf)})`);
-      if(diffs.length){
-        res.innerHTML='<span style="color:var(--erro)">Não bateu — importação bloqueada até corrigir o arquivo:<br>'+diffs.map(esc).join('<br>')+'</span>';
-        conferido=false;
-      }else{
-        res.innerHTML='<span style="color:var(--ok)">Bateu certinho. Pode importar.</span>';
-        conferido=true;
-      }
-    }
-    $('btn-importar').disabled=!(conferido&&!comErro.length);
-  });
 
   $('btn-importar').addEventListener('click',()=>{
     if(comErro.length){toast('Corrija os erros antes de importar.',true);return;}
@@ -2757,16 +2764,13 @@ const CATS_CUSTO=['Prolabore (Jane)','Prolabore (Wanderley)','Prolabore (Leo)',
   'Simples Nacional','Dedetização','Sistema Connectplug','Contabilidade','Água',
   'Luz (casa)','Luz (bar)','Manutenção Equipamentos','Marketing','Internet'];
 
-// Lista fechada para a importação por planilha (11/09/2026): categoria fora
-// daqui é ERRO, não aviso — "Custo dos Produtos" e "Custo de Produtos" não
-// podem virar duas categorias por causa de um espaço digitado errado.
+// A validação de categoria na importação (ver categoriaCanonica) usa o que
+// está cadastrado de verdade (CAT_REC/CAT_PAG), não uma lista fixa aqui —
+// senão categoria nova cadastrada pela tela Categorias (ex.: "Aporte Sócio
+// (Leo)") ficaria fora sem ninguém perceber por quê.
 // CDL Brumadinho (categoria — mensalidade da associação) não é a mesma coisa
 // que a conta CDL (recebível de Cartão Alimentação): nomes parecidos, coisas
 // opostas, não unificar.
-const CATS_FECHADAS_REC=[CAT_FATURAMENTO];
-const CATS_FECHADAS_PAG=[...CATS_CUSTO,CAT_INSUMOS];
-const CATS_FECHADAS_NEUTRAS=[CAT_TRANSFER,CAT_PESSOAL];
-const CATS_FECHADAS=[...CATS_FECHADAS_REC,...CATS_FECHADAS_PAG,...CATS_FECHADAS_NEUTRAS];
 
 // Normaliza para casar grafias diferentes do mesmo nome: o extrato traz
 // "IFOOD,COM AGENCIA" e "IFOOD COM AGENCIA", "LEONARDO FERNANDES" e "Leonardo
