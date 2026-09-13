@@ -457,7 +457,7 @@ db.enablePersistence({synchronizeTabs:true}).catch(e=>{
 });
 
 // Chaves que sincronizam com a nuvem. Chave nova só sincroniza se entrar aqui.
-const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','regrasOfx','falhasStone','ofxIgnorados','hist','mesesFechados'];
+const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','regrasOfx','falhasStone','ofxIgnorados','hist','mesesFechados','importacoes'];
 const fsSyncQ={};
 
 // ═══════════════════════════════════════════════
@@ -743,6 +743,33 @@ function reabrirMes(ym){
   addHist('Reabriu o mês',fmtMesAno(ym));
 }
 const fmtMesAno=ym=>{const[y,m]=ym.split('-').map(Number);return new Date(y,m-1,1).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});};
+
+// ═══════════ LOG DE IMPORTAÇÃO ═══════════
+// Cada importação por planilha vira um registro: quando, arquivo, quantas
+// linhas, totais por tipo, e os ids de TODOS os lançamentos criados (inclui as
+// duas pernas de cada Transferência). É isso que permite desfazer inteira uma
+// importação depois — sem ele, só dá pra apagar lançamento por lançamento.
+const getImportacoes=()=>ls.g('importacoes',[]);
+const setImportacoes=v=>ls.s('importacoes',v);
+function registrarImportacao(entry){
+  const imps=getImportacoes();
+  imps.unshift({id:uid('imp'),quando:agora(),por:APP.uid?.nome||'—',...entry});
+  setImportacoes(imps.slice(0,50)); // guarda as últimas 50
+}
+function ultimaImportacaoAtiva(){
+  return getImportacoes().find(i=>!i.desfeitaEm)||null;
+}
+function desfazerImportacao(id){
+  const imps=getImportacoes();
+  const imp=imps.find(i=>i.id===id);
+  if(!imp||imp.desfeitaEm)return;
+  const idsRemover=new Set(imp.lancIds||[]);
+  const lancs=getLanc().filter(l=>!idsRemover.has(l.id));
+  setLanc(lancs);
+  imp.desfeitaEm=agora();
+  setImportacoes(imps);
+  addHist('Desfez importação',`${imp.arquivo||'planilha'} — ${idsRemover.size} lançamento(s) removidos`);
+}
 const getHist=()=>ls.g('hist',[]);
 const addHist=(a,r='')=>{const h=getHist();h.unshift({id:uid('h'),u:APP.uid?.nome||'—',a,r,t:agora()});ls.s('hist',h.slice(0,120));};
 
@@ -2051,6 +2078,12 @@ const ALIAS_COL={
   bandeira:['bandeira','band'],
   conta:['conta','banco','contabancaria','caixa'],
   qtd:['qtdtransacoes','qtd','quantidade','qtdtransacao'],
+  // Chave única real da transação — STONE ID, FITID do OFX, ou qualquer id que
+  // não se repete. É o que decide duplicata (ver marcarRepetidasNoArquivo e o
+  // dedup contra o banco em analisarPlanilha) — nunca mais data+valor+descrição,
+  // que dava falso positivo em massa (dezenas de vendas de R$5/R$10 no mesmo dia
+  // não são repetição, são clientes diferentes).
+  chave:['chave','id','stoneid','fitid','chaveunica','idunico','identificadorunico'],
   pago:['pago','quitado','baixado','status','situacao']
 };
 // Origem NÃO é mais coluna digitada (11/09/2026) — se viesse errada ou em
@@ -2118,13 +2151,21 @@ function analisarPlanilha(texto){
     return{erroGeral:'A planilha precisa ter pelo menos as colunas Data e Valor. Baixe o modelo e use o mesmo cabeçalho.'};
 
   const existentes=getLanc();
+  // Chave já usada no banco: STONE ID, FITID e Chave de planilhas anteriores.
+  // É a ÚNICA coisa que define duplicata — nunca mais data+valor+descrição.
+  const chavesExistentes=new Set();
+  existentes.forEach(l=>{
+    if(l.chave)chavesExistentes.add(String(l.chave));
+    if(l.stoneId)chavesExistentes.add(String(l.stoneId));
+    if(l.fitid)chavesExistentes.add(String(l.fitid));
+  });
   const pega=(l,c)=>idx[c]!==undefined?(l[idx[c]]??''):'';
 
   return{linhas:dados.map((l,n)=>{
     const bruto={
       data:pega(l,'data'),hora:pega(l,'hora'),tipo:pega(l,'tipo'),descricao:pega(l,'descricao'),
       valor:pega(l,'valor'),valorLiquido:pega(l,'valorLiquido'),categoria:pega(l,'categoria'),forma:pega(l,'forma'),
-      bandeira:pega(l,'bandeira'),conta:pega(l,'conta'),qtd:pega(l,'qtd'),pago:pega(l,'pago')
+      bandeira:pega(l,'bandeira'),conta:pega(l,'conta'),qtd:pega(l,'qtd'),chave:pega(l,'chave'),pago:pega(l,'pago')
     };
     const erros=[],avisos=[];
     const dataCal=lerDataBR(bruto.data);
@@ -2185,27 +2226,27 @@ function analisarPlanilha(texto){
     const p=semAcento(bruto.pago);
     const pago=/^(sim|s|x|true|1|pago|quitado|baixado)$/.test(p);
 
-    const dup=venc&&!isNaN(valor)&&existentes.some(e=>
-      e.vencimento===venc&&Math.abs((e.valor||0)-valor)<0.005&&
-      semAcento(e.descricao||'')===semAcento(descricao));
-    if(dup)avisos.push('já existe no sistema');
+    // Duplicata = mesma CHAVE já existe no banco. Sem chave, não dá pra saber
+    // se é repetição ou uma segunda venda igual — não vira erro nem revisão
+    // item a item, é ignorado silenciosamente e contado ao final (§1 do Leo).
+    const chave=bruto.chave?String(bruto.chave).trim():'';
+    const dup=chave&&chavesExistentes.has(chave);
 
     const dataVenda=(dataCal&&hm)?`${dataCal}T${String(hm.hora).padStart(2,'0')}:${String(hm.min).padStart(2,'0')}`:null;
-    return{n:n+2,venc,dataVenda,conta,tipo,descricao,valor,valorLiquido,categoria,
+    return{n:n+2,venc,dataVenda,conta,tipo,descricao,valor,valorLiquido,categoria,chave,
       forma:bruto.forma||'',bandeira:bruto.bandeira||'',origem,qtd:isNaN(qtd)||qtd<1?1:qtd,
       pago,erros,avisos,dup};
   })};
 }
 
-// Marca linhas repetidas DENTRO do próprio arquivo. Colar extrato costuma
-// duplicar linha sem querer, e sem isso o valor entraria duas vezes.
+// Marca linhas repetidas DENTRO do próprio arquivo (colar duas vezes por
+// engano). Só quando a linha tem Chave — sem chave, não marca nada.
 function marcarRepetidasNoArquivo(linhas){
   const vistas=new Set();
   linhas.forEach(l=>{
-    if(l.erros.length)return;
-    const chave=`${l.venc}|${l.valor.toFixed(2)}|${semAcento(l.descricao)}`;
-    if(vistas.has(chave)){l.dup=true;l.avisos.push('repetida nesta planilha');}
-    else vistas.add(chave);
+    if(l.erros.length||!l.chave)return;
+    if(vistas.has(l.chave)){l.dup=true;l.avisos.push('chave repetida neste arquivo');}
+    else vistas.add(l.chave);
   });
   return linhas;
 }
@@ -2249,6 +2290,33 @@ function renderFechamentoMes(){
   }));
 }
 
+function renderImportLog(){
+  const box=$('imp-log');
+  if(!box)return;
+  const imps=getImportacoes().slice(0,8);
+  if(!imps.length){box.innerHTML='<div class="text-sm text-muted">Nenhuma importação ainda.</div>';return;}
+  box.innerHTML=imps.map(i=>`
+    <div class="flex justify-between items-center" style="padding:7px 0;border-bottom:1px solid var(--border)">
+      <div>
+        <strong>${esc(i.arquivo||'planilha.csv')}</strong>
+        <div class="text-sm text-muted">${esc(fmtData(i.quando.slice(0,10)))} ${esc(i.quando.slice(11,16))} por ${esc(i.por)} —
+          ${i.criados} lançamento(s)${i.ignorados?`, ${i.ignorados} ignorado(s) por já existir`:''}
+          ${i.desfeitaEm?' · <span style="color:var(--erro)">desfeita</span>':''}</div>
+      </div>
+      ${!i.desfeitaEm?`<button class="btn btn-sm btn-s" data-desfazer="${esc(i.id)}" style="color:var(--erro);border-color:var(--erro)">Desfazer</button>`:''}
+    </div>`).join('');
+  box.querySelectorAll('[data-desfazer]').forEach(b=>b.addEventListener('click',()=>{
+    const id=b.dataset.desfazer;
+    const imp=getImportacoes().find(i=>i.id===id);
+    if(!imp)return;
+    if(!confirm(`Desfazer a importação de "${imp.arquivo||'planilha'}"?\n\nRemove os ${imp.criados} lançamento(s) que ela criou. Isto não tem volta — baixe uma cópia antes se não tiver certeza.`))return;
+    desfazerImportacao(id);
+    renderImportLog();
+    toast('Importação desfeita.');
+    navTo('painel');
+  }));
+}
+
 function renderImportarPlanilha(){
   $('main').innerHTML=`
     <div class="ph">
@@ -2279,8 +2347,18 @@ function renderImportarPlanilha(){
         Alimentação → CDL (essas entram no ticket médio), Dinheiro/Boleto → Manual (fora do ticket médio).
         <strong>Categoria</strong> é lista fechada — fora dela a linha não entra, pra "Custo dos Produtos" não virar
         duas categorias por causa de acento ou espaço.
+        <strong>Chave</strong> (STONE ID, FITID, ou qualquer id que não se repete) é o que define duplicata — sem ela,
+        a linha nunca é tratada como repetida, mesmo que pareça igual a outra (vendas de mesmo valor no mesmo
+        dia são clientes diferentes, não repetição). Se a chave já existir no sistema, a linha é ignorada
+        silenciosamente — não entra pra revisão, só é contada no resumo depois de importar.
+        <strong>A importação é tudo ou nada:</strong> se sobrar qualquer erro no arquivo, nada é importado —
+        corrija o CSV e reenvie.
       </div>
 
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Importações</div>
+      <div id="imp-log"></div>
     </div>
     <div class="card" style="margin-bottom:16px">
       <div class="ctitle">Fechamento de mês</div>
@@ -2299,6 +2377,7 @@ function renderImportarPlanilha(){
     </div>
     <div id="imp-previa"></div>`;
   $('btn-modelo').addEventListener('click',baixarModeloPlanilha);
+  renderImportLog();
   renderFechamentoMes();
   $('btn-fechar-mes').addEventListener('click',()=>{
     const ym=$('fm-mes').value;
@@ -2317,63 +2396,111 @@ function renderImportarPlanilha(){
       // Excel costuma salvar CSV em ANSI; se vier caractere quebrado, relê nessa codificação
       if(txt.includes('�')){
         const fr2=new FileReader();
-        fr2.onload=()=>mostrarPreviaImport(String(fr2.result||''));
+        fr2.onload=()=>mostrarPreviaImport(String(fr2.result||''),f.name);
         fr2.readAsText(f,'ISO-8859-1');
         return;
       }
-      mostrarPreviaImport(txt);
+      mostrarPreviaImport(txt,f.name);
     };
     fr.readAsText(f,'UTF-8');
   });
 }
 
-function mostrarPreviaImport(texto){
+function mostrarPreviaImport(texto,nomeArquivo){
   const r=analisarPlanilha(texto);
   const box=$('imp-previa');
   if(r.erroGeral){box.innerHTML=`<div class="card"><div class="vazio" style="color:var(--erro)">${esc(r.erroGeral)}</div></div>`;return;}
   linhasImport=marcarRepetidasNoArquivo(r.linhas);
-  const validas=linhasImport.filter(l=>!l.erros.length);
   const comErro=linhasImport.filter(l=>l.erros.length);
-  const dups=validas.filter(l=>l.dup).length;
+  const validas=linhasImport.filter(l=>!l.erros.length);
+  const dups=validas.filter(l=>l.dup);
+  const novas=validas.filter(l=>!l.dup);
 
-  // Bate o total do arquivo, por forma, contra o total que o Claude informou
-  // (vindo do extrato original). Pega linha perdida no caminho, não só erro de
-  // classificação. Só pra vendas (Receber) — é o que tem "total do extrato".
-  const formasArquivo=[...new Set(validas.filter(l=>l.tipo==='receber'&&l.forma).map(l=>l.forma))];
-  const somaPorForma=f=>validas.filter(l=>l.tipo==='receber'&&l.forma===f&&!l.dup).reduce((s,l)=>s+l.valor,0);
-  let conferido=formasArquivo.length===0;
+  // Categorias que apareceram no arquivo mas não existem na lista fechada,
+  // agrupadas — pra mostrar de uma vez quais faltam, não uma por vez (item 7
+  // do Leo). Vem do próprio texto do erro de categoria.
+  const catsFaltando={};
+  comErro.forEach(l=>l.erros.forEach(e=>{
+    const m=e.match(/^categoria "(.+)" não está na lista$/);
+    if(m)(catsFaltando[m[1]]=catsFaltando[m[1]]||[]).push(l.n);
+  }));
+
+  // Resumo interno do arquivo — não contra o extrato original (nunca bate,
+  // muita coisa é legitimamente excluída/transformada no caminho), e sim
+  // contra o que o próprio Claude relatou ter mandado. Pega linha perdida no
+  // processo, não erro de classificação.
+  const temTransf=linhasImport.some(l=>l.tipo==='transferencia');
+  const somaTipo=t=>linhasImport.filter(l=>l.tipo===t).reduce((s,l)=>s+(l.valor||0),0);
+  const totLinhas=linhasImport.length,totRec=somaTipo('receber'),totPag=somaTipo('pagar'),totTransf=somaTipo('transferencia');
+  let conferido=false;
 
   box.innerHTML=`
-    ${formasArquivo.length?`
-    <div class="card" style="margin-bottom:16px">
-      <div class="ctitle">Bater com o total do extrato</div>
-      <div class="text-sm text-muted" style="margin-bottom:10px">
-        Digite o total que veio junto do extrato (Stone ou relatório da CDL), por forma. Se não bater,
-        a importação fica bloqueada — pega linha que ficou pra trás no caminho.
+    ${comErro.length?`
+    <div class="card" style="margin-bottom:16px;border-color:var(--erro)">
+      <div class="ctitle" style="color:var(--erro)">Erros — corrija o arquivo e reenvie (${comErro.length})</div>
+      <div class="text-sm text-muted" style="margin-bottom:10px">Enquanto houver erro, <strong>nada é importado</strong> — tudo ou nada.</div>
+      ${Object.keys(catsFaltando).length?`
+        <div class="text-sm" style="color:var(--erro);margin-bottom:10px">
+          <strong>Categorias não cadastradas:</strong><br>
+          ${Object.entries(catsFaltando).map(([c,ns])=>`${esc(c)} — linha(s) ${ns.slice(0,10).join(', ')}${ns.length>10?` +${ns.length-10}`:''}`).join('<br>')}
+        </div>`:''}
+      <div class="twrap" style="max-height:320px;overflow-y:auto">
+        <table>
+          <thead><tr><th>Linha</th><th>Data</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th><th>Motivo</th></tr></thead>
+          <tbody>${comErro.map(l=>`
+            <tr>
+              <td class="num">${l.n}</td>
+              <td class="num">${l.venc?esc(fmtData(l.venc)):'—'}</td>
+              <td>${esc(l.descricao)}</td>
+              <td>${esc(l.categoria)||'—'}</td>
+              <td class="num" style="text-align:right">${isNaN(l.valor)?'—':esc(fBRL(l.valor))}</td>
+              <td style="color:var(--erro)">${esc(l.erros.join(', '))}</td>
+            </tr>`).join('')}</tbody>
+        </table>
       </div>
-      ${formasArquivo.map(f=>`
-        <div class="flex justify-between items-center gap8" style="padding:6px 0">
-          <span style="flex:1">${esc(f)} <span class="text-sm text-muted">(arquivo soma ${esc(fBRL(somaPorForma(f)))})</span></span>
-          <input type="text" inputmode="decimal" class="conf-forma" data-forma="${esc(f)}" placeholder="total informado"
-            style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
-        </div>`).join('')}
-      <div id="conf-resultado" class="text-sm" style="margin-top:10px"></div>
-      <button class="btn btn-s btn-sm" id="btn-conferir" style="margin-top:8px">Conferir totais</button>
     </div>`:''}
-    <div class="card">
-      <div class="ctitle">Conferência</div>
-      <div class="fin-kgrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
-        <div class="kcard"><div class="kval valor-pos num">${validas.length-dups}</div><div class="klbl">Selecionados para importar</div></div>
-        <div class="kcard"><div class="kval num" style="color:var(--amber)">${dups}</div><div class="klbl">Parecem repetidos</div></div>
-        <div class="kcard"><div class="kval valor-neg num">${comErro.length}</div><div class="klbl">Com erro (serão ignorados)</div></div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="ctitle">Bater com o resumo do arquivo</div>
+      <div class="text-sm text-muted" style="margin-bottom:10px">
+        Digite o resumo que o Claude te passou junto com o CSV. Se não bater com o que o sistema leu do
+        arquivo, a importação fica bloqueada — pega linha que se perdeu no caminho.
       </div>
-      ${dups?`<div class="text-sm" style="color:var(--amber);margin-bottom:10px">Alguns lançamentos já existem com a mesma data, valor e descrição. Desmarque se não quiser repetir.</div>`:''}
+      <div class="flex justify-between items-center gap8" style="padding:6px 0">
+        <span style="flex:1">Linhas <span class="text-sm text-muted">(arquivo tem ${totLinhas})</span></span>
+        <input type="text" inputmode="numeric" id="conf-linhas" placeholder="linhas informadas"
+          style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
+      </div>
+      <div class="flex justify-between items-center gap8" style="padding:6px 0">
+        <span style="flex:1">Receber <span class="text-sm text-muted">(arquivo soma ${esc(fBRL(totRec))})</span></span>
+        <input type="text" inputmode="decimal" id="conf-receber" placeholder="total informado"
+          style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
+      </div>
+      <div class="flex justify-between items-center gap8" style="padding:6px 0">
+        <span style="flex:1">Pagar <span class="text-sm text-muted">(arquivo soma ${esc(fBRL(totPag))})</span></span>
+        <input type="text" inputmode="decimal" id="conf-pagar" placeholder="total informado"
+          style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
+      </div>
+      ${temTransf?`
+      <div class="flex justify-between items-center gap8" style="padding:6px 0">
+        <span style="flex:1">Transferência <span class="text-sm text-muted">(arquivo soma ${esc(fBRL(totTransf))})</span></span>
+        <input type="text" inputmode="decimal" id="conf-transf" placeholder="total informado"
+          style="width:150px;padding:7px 10px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-family:'Inter',sans-serif;font-size:13px;text-align:right">
+      </div>`:''}
+      <div id="conf-resultado" class="text-sm" style="margin-top:10px"></div>
+      <button class="btn btn-s btn-sm" id="btn-conferir" style="margin-top:8px" ${comErro.length?'disabled':''}>Conferir</button>
+    </div>
+    <div class="card">
+      <div class="ctitle">Resumo</div>
+      <div class="fin-kgrid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+        <div class="kcard"><div class="kval num">${totLinhas}</div><div class="klbl">Linhas no arquivo</div></div>
+        <div class="kcard"><div class="kval valor-pos num">${novas.length}</div><div class="klbl">Vão ser importadas</div></div>
+        <div class="kcard"><div class="kval num" style="color:var(--text-3)">${dups.length}</div><div class="klbl">Já existem — ignoradas</div></div>
+      </div>
       <div class="twrap" style="max-height:420px;overflow-y:auto">
         <table>
-          <thead><tr><th></th><th>Linha</th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th style="text-align:right">Valor</th><th>Situação</th></tr></thead>
-          <tbody>${linhasImport.map((l,i)=>`
-            <tr>
-              <td>${l.erros.length?'':`<input type="checkbox" class="imp-ck" data-i="${i}" ${l.dup?'':'checked'} style="width:15px;height:15px;accent-color:var(--accent)">`}</td>
+          <thead><tr><th>Linha</th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th style="text-align:right">Valor</th><th>Situação</th></tr></thead>
+          <tbody>${linhasImport.map(l=>`
+            <tr${l.dup?' style="opacity:.5"':''}>
               <td class="num">${l.n}</td>
               <td class="num">${l.venc?esc(fmtData(l.venc)):'—'}</td>
               <td>${l.tipo==='transferencia'?'<span class="bdg" style="background:var(--amber-bg,rgba(245,166,35,.15));color:var(--amber)">Transferência</span>'
@@ -2384,59 +2511,56 @@ function mostrarPreviaImport(texto){
               <td class="num fw6 ${l.tipo==='receber'?'valor-rec':'valor-pag'}" style="text-align:right">${isNaN(l.valor)?'—':esc(fBRL(l.valor))}</td>
               <td class="text-sm">${l.erros.length
                 ?`<span style="color:var(--erro)">${esc(l.erros.join(', '))}</span>`
+                :l.dup?`<span style="color:var(--text-3)">já existe — ignorada</span>`
                 :(l.avisos.length?`<span style="color:var(--amber)">${esc(l.avisos.join(', '))}</span>`:'<span style="color:var(--ok)">ok</span>')}</td>
             </tr>`).join('')}</tbody>
         </table>
       </div>
       <div class="flex gap8" style="margin-top:16px;flex-wrap:wrap">
-        <button class="btn btn-p" id="btn-importar" ${conferido?'':'disabled'}>Importar selecionados</button>
-        <button class="btn btn-s" id="btn-marcar-todos">Marcar todos</button>
-        <button class="btn btn-s" id="btn-desmarcar">Desmarcar todos</button>
+        <button class="btn btn-p" id="btn-importar" disabled>Importar tudo</button>
       </div>
-      ${formasArquivo.length?'<div class="text-sm text-muted" style="margin-top:8px">Confira os totais acima antes de importar.</div>':''}
+      <div class="text-sm text-muted" style="margin-top:8px">${comErro.length?'Corrija os erros acima antes de importar.':'Confira o resumo acima antes de importar.'}</div>
     </div>`;
 
-  const cks=()=>Array.from(box.querySelectorAll('.imp-ck'));
-  $('btn-marcar-todos').addEventListener('click',()=>cks().forEach(c=>c.checked=true));
-  $('btn-desmarcar').addEventListener('click',()=>cks().forEach(c=>c.checked=false));
-  if($('btn-conferir')){
-    $('btn-conferir').addEventListener('click',()=>{
-      const inputs=Array.from(box.querySelectorAll('.conf-forma'));
+  $('btn-conferir').addEventListener('click',()=>{
+    const nLinhas=parseInt(v('conf-linhas'),10);
+    const nRec=lerValorBR(v('conf-receber'));
+    const nPag=lerValorBR(v('conf-pagar'));
+    const nTransf=temTransf?lerValorBR(v('conf-transf')):totTransf;
+    const res=$('conf-resultado');
+    if(isNaN(nLinhas)||isNaN(nRec)||isNaN(nPag)||(temTransf&&isNaN(nTransf))){
+      res.innerHTML='<span style="color:var(--amber)">Preencha todos os campos.</span>';
+      conferido=false;
+    }else{
       const diffs=[];
-      let faltando=false;
-      inputs.forEach(inp=>{
-        const f=inp.dataset.forma;
-        const digitado=lerValorBR(inp.value);
-        if(inp.value.trim()===''||isNaN(digitado)){faltando=true;return;}
-        const real=somaPorForma(f);
-        if(Math.abs(real-digitado)>=0.01)diffs.push(`${f}: arquivo ${fBRL(real)} × informado ${fBRL(digitado)} (diferença ${fBRL(real-digitado)})`);
-      });
-      const res=$('conf-resultado');
-      if(faltando){
-        res.innerHTML='<span style="color:var(--amber)">Preencha o total de todas as formas.</span>';
-        conferido=false;
-      }else if(diffs.length){
+      if(nLinhas!==totLinhas)diffs.push(`Linhas: arquivo ${totLinhas} × informado ${nLinhas}`);
+      if(Math.abs(totRec-nRec)>=0.01)diffs.push(`Receber: arquivo ${fBRL(totRec)} × informado ${fBRL(nRec)} (diferença ${fBRL(totRec-nRec)})`);
+      if(Math.abs(totPag-nPag)>=0.01)diffs.push(`Pagar: arquivo ${fBRL(totPag)} × informado ${fBRL(nPag)} (diferença ${fBRL(totPag-nPag)})`);
+      if(temTransf&&Math.abs(totTransf-nTransf)>=0.01)diffs.push(`Transferência: arquivo ${fBRL(totTransf)} × informado ${fBRL(nTransf)} (diferença ${fBRL(totTransf-nTransf)})`);
+      if(diffs.length){
         res.innerHTML='<span style="color:var(--erro)">Não bateu — importação bloqueada até corrigir o arquivo:<br>'+diffs.map(esc).join('<br>')+'</span>';
         conferido=false;
       }else{
         res.innerHTML='<span style="color:var(--ok)">Bateu certinho. Pode importar.</span>';
         conferido=true;
       }
-      $('btn-importar').disabled=!conferido;
-    });
-  }
+    }
+    $('btn-importar').disabled=!(conferido&&!comErro.length);
+  });
+
   $('btn-importar').addEventListener('click',()=>{
-    if(!conferido){toast('Confira os totais antes de importar.',true);return;}
-    const escolhidas=cks().filter(c=>c.checked).map(c=>linhasImport[parseInt(c.dataset.i)]);
-    if(!escolhidas.length){toast('Nenhuma linha selecionada.',true);return;}
-    if(!confirm(`Importar ${escolhidas.length} lançamento(s)?\n\nNada do que já está no sistema será alterado.`))return;
+    if(comErro.length){toast('Corrija os erros antes de importar.',true);return;}
+    if(!conferido){toast('Confira o resumo antes de importar.',true);return;}
+    if(!novas.length){toast('Nada novo pra importar — tudo já existe no sistema.',true);return;}
+    if(!confirm(`Importar ${novas.length} lançamento(s)?\n\n${dups.length?dups.length+' já existentes serão ignorados. ':''}Nada do que já está no sistema será alterado.`))return;
     const lancs=getLanc();
-    escolhidas.forEach(l=>{
+    const idsGerados=[];
+    novas.forEach(l=>{
       const comum={valorBruto:l.valor,valorLiquido:l.valorLiquido??l.valor,bandeira:l.bandeira||'',
         vencimento:l.venc,dataVenda:l.dataVenda||null,diaOperacional:l.venc,
         dataRecebimento:l.venc,totalParcelas:1,parcelaAtual:1,grupoId:null,
         pago:l.pago,dataPagamento:l.pago?l.venc:null,qtdTransacoes:l.qtd||1,
-        cliente:'',showId:null,foraDaAnalise:false,
+        cliente:'',showId:null,foraDaAnalise:false,chave:l.chave||'',
         obs:'Importado de planilha',origem:l.origem||'Manual',
         criadoEm:agora(),atualizadoEm:agora()};
       if(l.tipo==='transferencia'){
@@ -2444,22 +2568,27 @@ function mostrarPreviaImport(texto){
         // origem (Dinheiro ou CDL — vem de l.conta), entra no Sicredi.
         const origemConta=l.conta==='CDL'?'CDL':'Dinheiro';
         const desc=l.descricao||(origemConta==='CDL'?'Repasse CDL':'Depósito do caixa');
-        lancs.push({id:uid('l'),tipo:'pagar',valor:l.valor,descricao:desc,
+        const id1=uid('l'),id2=uid('l');
+        lancs.push({id:id1,tipo:'pagar',valor:l.valor,descricao:desc,
           categoria:CAT_TRANSFER,forma:l.forma||origemConta,conta:origemConta,...comum,bandeira:'',origem:'Manual'});
-        lancs.push({id:uid('l'),tipo:'receber',valor:l.valor,descricao:desc,
+        lancs.push({id:id2,tipo:'receber',valor:l.valor,descricao:desc,
           categoria:CAT_TRANSFER,forma:l.forma||origemConta,conta:'Sicredi',...comum,bandeira:'',origem:'Manual'});
+        idsGerados.push(id1,id2);
         return;
       }
+      const id=uid('l');
       lancs.push({
-        id:uid('l'),tipo:l.tipo||'pagar',valor:l.valor,descricao:l.descricao,
+        id,tipo:l.tipo||'pagar',valor:l.valor,descricao:l.descricao,
         categoria:l.categoria,forma:l.forma,conta:l.conta||'Sicredi',...comum
       });
+      idsGerados.push(id);
     });
     setLanc(lancs);
-    const transf=escolhidas.filter(l=>l.tipo==='transferencia').length;
-    const criados=escolhidas.length+transf; // transferência gera 2 lançamentos por linha
-    addHist('Importou planilha',`${escolhidas.length} linha(s) → ${criados} lançamento(s)`);
-    toast(`${criados} lançamento(s) importados.`);
+    registrarImportacao({arquivo:nomeArquivo||'planilha.csv',linhas:totLinhas,
+      criados:idsGerados.length,ignorados:dups.length,lancIds:idsGerados,
+      totalReceber:totRec,totalPagar:totPag,totalTransferencia:totTransf});
+    addHist('Importou planilha',`${novas.length} linha(s) → ${idsGerados.length} lançamento(s), ${dups.length} ignorado(s)`);
+    toast(`${idsGerados.length} lançamento(s) importados.${dups.length?` ${dups.length} ignorado(s) por já existir.`:''}`);
     navTo('painel');
   });
 }
