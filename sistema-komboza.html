@@ -600,7 +600,7 @@ function fsSync(key,data){
   if(!PODE_GRAVAR_NUVEM)return;   // cópia local: salva só no aparelho
   if(fsSyncQ[key])clearTimeout(fsSyncQ[key]);
   setCloudStatus('saving');
-  fsSyncQ[key]=setTimeout(async()=>{
+  const meuTimer=setTimeout(async()=>{
     fsPendentes++;
     try{
       // Relê o valor local no momento do envio (pode ter mudado desde o agendamento)
@@ -627,8 +627,12 @@ function fsSync(key,data){
       fsPendentes=Math.max(0,fsPendentes-1);
       setCloudStatus('error');
       console.warn('Firestore sync ['+key+']:',e.message);
+    }finally{
+      // Só libera se nenhuma gravação nova foi agendada nesse meio-tempo
+      if(fsSyncQ[key]===meuTimer)delete fsSyncQ[key];
     }
   },600);
+  fsSyncQ[key]=meuTimer;
 }
 
 async function fsPull(){
@@ -686,6 +690,11 @@ function fsStartSync(){
   FS_KEYS.forEach(key=>{
     const un=db.collection('appData').doc(key).onSnapshot(doc=>{
       if(doc.metadata.hasPendingWrites)return;   // eco da própria gravação
+      // Alteração local ainda na fila (os 600ms antes de enviar): a versão do
+      // servidor é mais velha. Sem isso, garantirCategorias no login gravava a
+      // categoria, o primeiro snapshot trazia a lista antiga por cima, e o envio
+      // agendado relia o localStorage já sobrescrito — a mudança sumia calada.
+      if(fsSyncQ[key])return;
       if(!doc.exists)return;
       const data=doc.data()?.data;
       if(data===undefined)return;
@@ -2669,6 +2678,8 @@ function renderImportarPlanilha(){
 }
 
 function mostrarPreviaImport(texto,nomeArquivo){
+  // Lista de categorias sempre fresca na hora de validar
+  garantirCategorias();reloadCats();
   const r=analisarPlanilha(texto);
   const box=$('imp-previa');
   if(r.erroGeral){box.innerHTML=`<div class="card"><div class="vazio" style="color:var(--erro)">${esc(r.erroGeral)}</div></div>`;return;}
@@ -2686,6 +2697,8 @@ function mostrarPreviaImport(texto,nomeArquivo){
     const m=e.match(/^categoria "(.+)" não está cadastrada$/);
     if(m)(catsFaltando[m[1]]=catsFaltando[m[1]]||[]).push(l.n);
   }));
+  const oficiaisTodas=[...CATS_OFICIAIS.rec,...CATS_OFICIAIS.var,...CATS_OFICIAIS.fix];
+  const oficiaisFaltando=Object.keys(catsFaltando).filter(c=>oficiaisTodas.some(o=>chaveCol(o)===chaveCol(c)));
 
   // Resumo interno do arquivo — não contra o extrato original (nunca bate,
   // muita coisa é legitimamente excluída/transformada no caminho), e sim
@@ -2713,7 +2726,12 @@ function mostrarPreviaImport(texto,nomeArquivo){
         <div class="text-sm" style="color:var(--erro);margin-bottom:10px">
           <strong>Categorias não cadastradas:</strong><br>
           ${Object.entries(catsFaltando).map(([c,ns])=>`${esc(c)} — linha(s) ${ns.slice(0,10).join(', ')}${ns.length>10?` +${ns.length-10}`:''}`).join('<br>')}
-        </div>`:''}
+        </div>
+        ${oficiaisFaltando.length?`
+        <div class="resumo-box" style="margin-bottom:12px">
+          <div class="text-sm"><strong>${oficiaisFaltando.length} dessas estão na lista oficial</strong> e só não foram cadastradas ainda.</div>
+          <button class="btn btn-p btn-sm" id="btn-imp-lista-oficial" style="margin-top:8px">Cadastrar lista oficial e reconferir</button>
+        </div>`:''}`:''}
       <div class="twrap" style="max-height:320px;overflow-y:auto">
         <table>
           <thead><tr><th>Linha</th><th>Data</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th><th>Motivo</th></tr></thead>
@@ -2772,6 +2790,20 @@ function mostrarPreviaImport(texto,nomeArquivo){
       </div>
       <div class="text-sm text-muted" style="margin-top:8px">${comErro.length?'Corrija os erros acima antes de importar.':(conferido?'':'O resumo do arquivo não bateu — corrija antes de importar.')}</div>
     </div>`;
+
+  // Só ADICIONA as categorias oficiais que faltam, cada uma no bloco certo.
+  // Renomear/excluir fica na tela Categorias, que mostra a prévia antes.
+  $('btn-imp-lista-oficial')?.addEventListener('click',()=>{
+    const cats=getCats();
+    let add=0;
+    ['rec','var','fix'].forEach(g=>CATS_OFICIAIS[g].forEach(nome=>{
+      const existe=['rec','var','fix'].some(k=>(cats[k]||[]).some(c=>chaveCol(c)===chaveCol(nome)));
+      if(!existe){cats[g]=[...(cats[g]||[]),nome];add++;}
+    }));
+    if(add){setCats(cats);reloadCats();addHist('Cadastrou categorias da lista oficial',`${add} categoria(s)`);}
+    toast(`${add} categoria(s) cadastrada(s). Reconferindo o arquivo...`);
+    mostrarPreviaImport(texto,nomeArquivo);
+  });
 
   $('btn-importar').addEventListener('click',()=>{
     if(comErro.length){toast('Corrija os erros antes de importar.',true);return;}
