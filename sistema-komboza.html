@@ -397,6 +397,17 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
   </div>
 </div>
 
+<div class="moverlay hidden" id="m-catsofi">
+  <div class="modal" style="max-width:560px">
+    <div class="mhead"><h2>Aplicar lista oficial de categorias</h2><button class="mclose" data-close="m-catsofi">✕</button></div>
+    <div class="mbody" id="catsofi-body"></div>
+    <div class="mfoot">
+      <button class="btn btn-s" data-close="m-catsofi">Cancelar</button>
+      <button class="btn btn-p" id="catsofi-acao">Aplicar</button>
+    </div>
+  </div>
+</div>
+
 <div class="moverlay hidden" id="m-senha">
   <div class="modal" style="max-width:420px">
     <div class="mhead"><h2>Alterar senha</h2><button class="mclose" data-close="m-senha">✕</button></div>
@@ -834,6 +845,38 @@ const CAT_PESSOAL='Uso pessoal — fora da operação';
 // para elas pelo nome.
 const CATS_FIXAS=[CAT_TAXA,CAT_FATURAMENTO,CAT_TRANSFER,CAT_PESSOAL];
 
+// ═══════════ CATEGORIAS NEUTRAS ═══════════
+// Não são receita nem despesa: só mudam o dinheiro de lugar ou registram algo
+// que passou pelo CNPJ sem ser operação do bar. Ficam fora de Entrou/Saiu,
+// faturamento por mês, gasto por categoria e previsão — mas continuam contando
+// no saldo por conta, porque lá o que importa é onde o dinheiro está.
+const CATS_NEUTRAS=[CAT_TRANSFER,CAT_PESSOAL];
+const noResultado=l=>!CATS_NEUTRAS.includes(l.categoria||'');
+
+// ═══════════ LISTA OFICIAL DE CATEGORIAS ═══════════
+// Grafia exata usada nos 4.035 lançamentos reais de jun/jul/ago 2026, conforme
+// a lista que o Leo mandou em 13/09/2026. É o que a ação "Aplicar lista
+// oficial" (tela Categorias) usa pra acertar o cadastro de uma vez.
+const CATS_OFICIAIS={
+  rec:['Faturamento com Vendas de Produtos','Aporte Sócio (Leo)'],
+  var:['Custo dos Produtos','Prolabore (Leo)','Prolabore (Jane)','Prolabore (Wanderley)',
+    'Salário (Maria)','Freelance','Atração','Manutenção Equipamentos','Gasolina',
+    'Marketing','Descartáveis'],
+  fix:['Aluguel','Água','Luz (bar)','Luz (casa)','Internet','Investimentos',
+    'Juros bancários','CDL Brumadinho','FGTS','Simples Nacional','Contabilidade',
+    'Sistema Connectplug','Locação de Equipamento']
+};
+// Mesmo conceito, nome diferente: renomear leva os lançamentos junto, em vez de
+// criar a nova e deixar a antiga com os valores presos.
+const CATS_RENOMEAR={
+  'Marketing / Divulgação':'Marketing',
+  'Manutenção':'Manutenção Equipamentos',
+  'Sistema / Assinaturas':'Sistema Connectplug'
+};
+// Nunca somem do cadastro, mesmo fora da lista oficial: o sistema cria
+// lançamento com elas sozinho e ficariam apontando pra nome inexistente.
+const CATS_PROTEGIDAS=[CAT_TAXA,CAT_TRANSFER,CAT_PESSOAL];
+
 // ═══════════ DINHEIRO ═══════════
 // Sem estimativa. O pai do Leo passou a anotar tudo — vendas e gastos em
 // espécie entram como lançamento manual ou pela planilha modelo (conta
@@ -866,12 +909,16 @@ function migrarLancamentos(){
   if(mudou){setLanc(lancs);console.info('[KOMBOZA] Lançamentos migrados para o modelo novo.');}
 }
 
-// Garante as categorias fixas sem mexer no que já está cadastrado.
+// Garante só as categorias que o SISTEMA precisa pra funcionar, sem mexer no
+// resto. Antes semeava também toda a lista de custos (CATS_CUSTO, Insumos) a
+// cada login — o que desfaria a limpeza da lista oficial: excluir Dedetização
+// ou Insumos e elas voltariam sozinhas no próximo login. O cadastro de
+// categorias agora é do Leo (tela Categorias / Aplicar lista oficial).
 function garantirCategorias(){
   const c=getCats();let mudou=false;
-  const existe=n=>(c.rec||[]).includes(n)||(c.var||[]).includes(n)||(c.fix||[]).includes(n);
+  const existe=n=>['rec','var','fix'].some(g=>(c[g]||[]).some(x=>chaveCol(x)===chaveCol(n)));
   if(!existe(CAT_FATURAMENTO)){c.rec=[CAT_FATURAMENTO,...(c.rec||[])];mudou=true;}
-  [CAT_TAXA,CAT_INSUMOS,CAT_PESSOAL,CAT_TRANSFER,...CATS_CUSTO].forEach(n=>{
+  CATS_PROTEGIDAS.forEach(n=>{
     if(!existe(n)){c.var=[...(c.var||[]),n];mudou=true;}
   });
   if(mudou){setCats(c);reloadCats();}
@@ -1070,7 +1117,13 @@ document.addEventListener('click',e=>{if(e.target.closest('.sidebar .nitem,.side
 function renderPainel(){
   if(!APP.mesPainel)APP.mesPainel=ymAtual();
   const ym=APP.mesPainel,hoje=hojeISO();
-  const lancs=getLanc();
+  // Transferência não é receita nem despesa: depositar o caixa no banco não
+  // faturou nada nem gastou nada. Como cada transferência gera duas pernas
+  // (uma "receber" e uma "pagar"), sem tirar daqui ela inflava Entrou E Saiu
+  // pelo mesmo valor — o "Sobrou" ficava certo, mas o faturamento do mês
+  // aparecia maior do que foi. Saldo por conta continua contando as duas
+  // pernas, que é justamente o que move o dinheiro de conta.
+  const lancs=getLanc().filter(noResultado);
   // Receita entra no mês em que foi RECEBIDA; despesa, no mês em que foi paga.
   // Pendente conta pelo vencimento — é o que ainda vai cair.
   const pagosNoMes=l=>l.pago&&(l.dataPagamento||l.vencimento||'').startsWith(ym);
@@ -1172,7 +1225,9 @@ function renderPainel(){
       <div class="ctitle">Saldo por conta</div>
       <div class="fin-kgrid" style="grid-template-columns:repeat(${CONTAS.length},1fr)">
         ${CONTAS.map(c=>{
-          const da=lancs.filter(l=>l.conta===c&&l.pago);
+          // Aqui usa TODOS os lançamentos, inclusive transferência: é ela que
+          // tira do caixa e põe no banco. Fora daqui, transferência não conta.
+          const da=getLanc().filter(l=>l.conta===c&&l.pago);
           const s=da.reduce((s,l)=>s+(l.tipo==='receber'?l.valor:-l.valor),0);
           return `<div class="kcard">
             <div class="kval ${s>=0?'valor-pos':'valor-neg'} num">${esc(fBRL(s))}</div>
@@ -1670,7 +1725,9 @@ $('btn-salvar-fixa').addEventListener('click',()=>{
 // ═══════════════════════════════════════════════
 function renderPrevisao(){
   gerarRecorrentes();
-  const lancs=getLanc();
+  // Transferência e uso pessoal não entram na previsão: uma só troca o dinheiro
+  // de conta, a outra não é operação do bar. Ver CATS_NEUTRAS.
+  const lancs=getLanc().filter(noResultado);
   const hoje=hojeISO();
   // Saldo de partida: tudo que já foi efetivamente pago/recebido até hoje
   let saldo=lancs.filter(l=>l.pago).reduce((s,l)=>s+(l.tipo==='receber'?l.valor:-l.valor),0);
@@ -1732,14 +1789,18 @@ function renderCategorias(){
       <div id="cat-${chave}">
         ${(c[chave]||[]).map((nome,i)=>{
           const n=lancsDaCategoria(nome).length;
-          // A categoria da taxa é gerada pelo próprio sistema: não pode ser
-          // apagada nem renomeada, senão os lançamentos automáticos ficariam
-          // apontando pra um nome que não existe mais na lista.
-          const fixa=nome===CAT_TAXA;
+          // Categorias que o próprio sistema usa sozinho não podem ser apagadas
+          // nem renomeadas, senão os lançamentos automáticos ficariam apontando
+          // pra um nome que não existe mais na lista. Continuam como input
+          // (readonly) pra não mudar o índice que salvarCategorias lê.
+          const neutra=CATS_NEUTRAS.includes(nome);
+          const fixa=CATS_PROTEGIDAS.includes(nome);
           return `<div class="flex gap8 items-center" style="margin-bottom:7px">
-            <input type="text" value="${esc(nome)}" data-cat="${chave}" data-i="${i}" ${fixa?'readonly title="Categoria fixa do sistema" style="flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text-2);font-size:13px;font-family:\'Inter\',sans-serif;outline:none;cursor:not-allowed"':'style="flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:\'Inter\',sans-serif;outline:none"'}>
+            <input type="text" value="${esc(nome)}" data-cat="${chave}" data-i="${i}" ${fixa?'readonly title="Categoria do sistema" style="flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text-2);font-size:13px;font-family:\'Inter\',sans-serif;outline:none;cursor:not-allowed"':'style="flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:\'Inter\',sans-serif;outline:none"'}>
             <span class="text-sm" style="color:var(--text-3);min-width:74px;text-align:right">${n?n+' lançam.':'sem uso'}</span>
-            ${fixa
+            ${neutra
+              ? '<span class="bdg bcz" title="Não conta como receita nem despesa">neutra</span>'
+              : fixa
               ? '<span class="bdg bcz" title="Gerada pelo sistema ao lançar taxa de cartão">fixa</span>'
               : `<button class="btn btn-sm btn-d" data-rmcat="${chave}" data-i="${i}" title="Excluir categoria">✕</button>`}
           </div>`;
@@ -1751,11 +1812,19 @@ function renderCategorias(){
   $('main').innerHTML=`
     <div class="ph">
       <div><h1>Categorias</h1><p>Como o dinheiro é classificado nos relatórios</p></div>
-      <span class="text-sm text-muted">Salva sozinho a cada alteração</span>
+      <div class="flex gap8 items-center" style="flex-wrap:wrap">
+        <span class="text-sm text-muted">Salva sozinho a cada alteração</span>
+        <button class="btn btn-s btn-sm" id="btn-lista-oficial">Aplicar lista oficial</button>
+      </div>
     </div>
     ${bloco('rec','Entradas','O que traz dinheiro pro bar.')}
     ${bloco('var','Saídas variáveis','Mudam conforme o movimento: bebida, insumo, cachê.')}
     ${bloco('fix','Saídas fixas','Se repetem todo mês, com ou sem movimento.')}
+    <div class="text-sm text-muted" style="margin-bottom:8px">
+      <span class="bdg bcz">neutra</span> não é receita nem despesa: fica fora de Entrou, Saiu, faturamento e previsão,
+      mas continua no saldo por conta. <span class="bdg bcz">fixa</span> é criada pelo próprio sistema.
+      Nenhuma das duas pode ser renomeada ou excluída.
+    </div>
     <div class="text-sm text-muted">Ao renomear, os lançamentos que usavam o nome antigo são atualizados junto, para nenhum valor ficar solto fora dos relatórios.</div>`;
 
   const lerBloco=chave=>Array.from(document.querySelectorAll(`[data-cat="${chave}"]`)).map(i=>i.value.trim()).filter(Boolean);
@@ -1798,7 +1867,156 @@ function renderCategorias(){
   $('main').querySelectorAll('[data-rmcat]').forEach(b=>b.addEventListener('click',()=>{
     abrirExclusaoCategoria(b.dataset.rmcat, parseInt(b.dataset.i));
   }));
+  $('btn-lista-oficial').addEventListener('click',abrirListaOficial);
 }
+
+// ── Aplicar a lista oficial de categorias ──
+// Acerta o cadastro inteiro de uma vez, em vez de renomear/excluir 30 vezes na
+// mão (que foi o que gerou as diferenças de grafia que travaram a importação).
+// Nada é apagado com lançamento dentro: categoria em uso que sobrou fora da
+// lista aparece no relatório e continua existindo, pra ser resolvida uma a uma
+// pelo fluxo normal de exclusão (que oferece mover os lançamentos antes).
+function planoListaOficial(){
+  const atual=getCats();
+  const todasAtuais=[...(atual.rec||[]),...(atual.var||[]),...(atual.fix||[])];
+  const chave=s=>chaveCol(s);
+
+  // Renomear: nome antigo cadastrado → nome oficial
+  const renomear=Object.entries(CATS_RENOMEAR)
+    .filter(([velho])=>todasAtuais.some(c=>chave(c)===chave(velho)))
+    .map(([velho,novo])=>({
+      velho:todasAtuais.find(c=>chave(c)===chave(velho)),novo,
+      lancs:lancsDaCategoria(todasAtuais.find(c=>chave(c)===chave(velho))).length
+    }));
+  const jaRenomeadas=new Set(renomear.map(r=>chave(r.velho)));
+
+  // Adicionar: está na lista oficial e não existe no cadastro (nem via rename)
+  const adicionar=[];
+  ['rec','var','fix'].forEach(g=>{
+    CATS_OFICIAIS[g].forEach(nome=>{
+      const existe=todasAtuais.some(c=>chave(c)===chave(nome))
+        ||renomear.some(r=>chave(r.novo)===chave(nome));
+      if(!existe)adicionar.push({grupo:g,nome});
+    });
+  });
+
+  // Sobrando: cadastrada, fora da lista oficial, não é protegida nem renomeada.
+  // Por bloco, porque "Outros" existe em Entradas e em Saídas variáveis.
+  const oficiaisTodas=[...CATS_OFICIAIS.rec,...CATS_OFICIAIS.var,...CATS_OFICIAIS.fix];
+  const sobrando=[];
+  ['rec','var','fix'].forEach(g=>(atual[g]||[]).forEach(c=>{
+    if(oficiaisTodas.some(o=>chave(o)===chave(c)))return;
+    if(CATS_PROTEGIDAS.some(p=>chave(p)===chave(c)))return;
+    if(jaRenomeadas.has(chave(c)))return;
+    sobrando.push({nome:c,grupo:g,lancs:lancsDaCategoria(c).length});
+  }));
+  const remover=sobrando.filter(s=>s.lancs===0);
+  const emUso=sobrando.filter(s=>s.lancs>0);
+
+  // Mover de grupo: existe, mas está no bloco errado (ex.: Contabilidade em variáveis)
+  const mover=[];
+  ['rec','var','fix'].forEach(g=>{
+    CATS_OFICIAIS[g].forEach(nome=>{
+      const grupoAtual=['rec','var','fix'].find(k=>(atual[k]||[]).some(c=>chave(c)===chave(nome)));
+      if(grupoAtual&&grupoAtual!==g)mover.push({nome,de:grupoAtual,para:g});
+    });
+  });
+
+  return{renomear,adicionar,remover,emUso,mover};
+}
+
+const NOME_GRUPO={rec:'Entradas',var:'Saídas variáveis',fix:'Saídas fixas'};
+
+function abrirListaOficial(){
+  const p=planoListaOficial();
+  const nada=!p.renomear.length&&!p.adicionar.length&&!p.remover.length&&!p.mover.length;
+  const lista=(titulo,itens,cor)=>itens.length?`
+    <div style="margin-bottom:14px">
+      <div class="text-sm fw6" style="color:${cor};margin-bottom:5px">${titulo} (${itens.length})</div>
+      <div class="text-sm text-muted" style="line-height:1.8">${itens.join('<br>')}</div>
+    </div>`:'';
+
+  $('catsofi-body').innerHTML=nada
+    ? '<div class="resumo-box"><div><strong>Cadastro já está igual à lista oficial.</strong></div><div class="text-sm text-muted">Nada pra mudar.</div></div>'
+    : `
+    ${lista('Renomear (os lançamentos vão junto)',p.renomear.map(r=>
+      `${esc(r.velho)} → <strong>${esc(r.novo)}</strong>${r.lancs?` · ${r.lancs} lançamento(s)`:''}`),'var(--amber)')}
+    ${lista('Adicionar',p.adicionar.map(a=>`${esc(a.nome)} <span style="color:var(--text-3)">— ${NOME_GRUPO[a.grupo]}</span>`),'var(--ok)')}
+    ${lista('Mudar de bloco',p.mover.map(m=>`${esc(m.nome)}: ${NOME_GRUPO[m.de]} → <strong>${NOME_GRUPO[m.para]}</strong>`),'var(--amber)')}
+    ${lista('Excluir (sem nenhum lançamento usando)',p.remover.map(r=>`${esc(r.nome)} <span style="color:var(--text-3)">— ${NOME_GRUPO[r.grupo]}</span>`),'var(--erro)')}
+    ${p.emUso.length?`
+      <div style="margin-bottom:14px">
+        <div class="text-sm fw6" style="color:var(--erro);margin-bottom:5px">Fora da lista, mas em uso — NÃO serão excluídas (${p.emUso.length})</div>
+        <div class="text-sm text-muted" style="line-height:1.8">
+          ${p.emUso.map(e=>`${esc(e.nome)} <span style="color:var(--text-3)">— ${NOME_GRUPO[e.grupo]}</span> · <strong>${e.lancs} lançamento(s)</strong>`).join('<br>')}
+        </div>
+        <div class="text-sm" style="color:var(--amber);margin-top:6px">
+          Excluir uma dessas apagaria a classificação de lançamento real. Use o ✕ de cada uma
+          na lista, que oferece mover os lançamentos antes.
+        </div>
+      </div>`:''}
+    <div class="text-sm text-muted">
+      ${esc(CATS_PROTEGIDAS.join(' · '))} continuam no cadastro: o sistema cria lançamento com elas sozinho.
+    </div>`;
+
+  $('catsofi-acao').classList.toggle('hidden',nada);
+  openM('m-catsofi');
+}
+
+$('catsofi-acao').addEventListener('click',()=>{
+  const p=planoListaOficial();
+  if(!confirm(`Aplicar a lista oficial?\n\n`+
+    `${p.renomear.length} renomeada(s), ${p.adicionar.length} adicionada(s), `+
+    `${p.mover.length} movida(s) de bloco, ${p.remover.length} excluída(s).\n\n`+
+    `Nenhum lançamento é apagado.`))return;
+
+  const cats=getCats();
+  const chave=s=>chaveCol(s);
+  const lancs=getLanc();
+  let lancsMexidos=0;
+
+  // 1. Renomear, levando os lançamentos junto
+  p.renomear.forEach(({velho,novo})=>{
+    ['rec','var','fix'].forEach(g=>{
+      cats[g]=(cats[g]||[]).map(c=>chave(c)===chave(velho)?novo:c);
+    });
+    lancs.forEach(l=>{
+      if(chave(l.categoria||'')===chave(velho)){l.categoria=novo;l.atualizadoEm=agora();lancsMexidos++;}
+    });
+  });
+
+  // 2. Excluir só as que ninguém usa — por bloco, nunca pelo nome em todo lugar
+  p.remover.forEach(({nome,grupo})=>{
+    cats[grupo]=(cats[grupo]||[]).filter(c=>chave(c)!==chave(nome));
+  });
+
+  // 3. Mudar de bloco (tira de onde está, põe no bloco certo)
+  p.mover.forEach(({nome,de,para})=>{
+    cats[de]=(cats[de]||[]).filter(c=>chave(c)!==chave(nome));
+    const jaLa=(cats[para]||[]).some(c=>chave(c)===chave(nome));
+    if(!jaLa)cats[para]=[...(cats[para]||[]),nome];
+  });
+
+  // 4. Adicionar o que falta
+  p.adicionar.forEach(({grupo,nome})=>{
+    if(!(cats[grupo]||[]).some(c=>chave(c)===chave(nome)))
+      cats[grupo]=[...(cats[grupo]||[]),nome];
+  });
+
+  // 5. Protegidas continuam existindo (ficam em saídas variáveis, como sempre)
+  CATS_PROTEGIDAS.forEach(nome=>{
+    const existe=['rec','var','fix'].some(g=>(cats[g]||[]).some(c=>chave(c)===chave(nome)));
+    if(!existe)cats.var=[...(cats.var||[]),nome];
+  });
+
+  if(lancsMexidos)setLanc(lancs);
+  setCats(cats);reloadCats();
+  addHist('Aplicou lista oficial de categorias',
+    `${p.renomear.length} renomeada(s), ${p.adicionar.length} adicionada(s), ${p.remover.length} excluída(s), ${lancsMexidos} lançamento(s) atualizado(s)`);
+  closeM('m-catsofi');
+  toast(`Categorias atualizadas.${lancsMexidos?` ${lancsMexidos} lançamento(s) renomeado(s).`:''}`);
+  renderCategorias();
+});
 
 // ── Exclusão de categoria ──
 // Nunca some com lançamento: se a categoria estiver em uso, a saída padrão é
