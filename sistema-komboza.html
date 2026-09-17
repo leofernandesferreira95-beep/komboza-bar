@@ -2286,7 +2286,16 @@ function baixarModeloPlanilha(){
     ['06/09/2026','23:40','Receber','Venda avulsa em dinheiro','80,00','Faturamento com Vendas de Produtos','Dinheiro','Dinheiro','Sim'],
     ['07/09/2026','','Transferência','Depósito do caixa no banco','800,00','','','',  'Sim']
   ];
-  const linhas=[COLUNAS_MODELO.join(';'), ...ex.map(l=>l.join(';'))];
+  // Linha de conferência: linhas;total Receber;total Pagar;total Transferência.
+  // Fica no modelo pronta, com os totais dos próprios exemplos, pra servir de
+  // referência de formato — o sistema lê ela sozinho na importação.
+  const somaEx=t=>ex.filter(l=>semAcento(l[2]).startsWith(semAcento(t).slice(0,6)))
+    .reduce((s,l)=>s+lerValorBR(l[4]),0);
+  const resumo=['#RESUMO',ex.length,
+    somaEx('Receber').toFixed(2).replace('.',','),
+    somaEx('Pagar').toFixed(2).replace('.',','),
+    somaEx('Transferência').toFixed(2).replace('.',',')].join(';');
+  const linhas=[resumo, COLUNAS_MODELO.join(';'), ...ex.map(l=>l.join(';'))];
   // BOM na frente para o Excel abrir com acento correto
   const blob=new Blob(['﻿'+linhas.join('\r\n')],{type:'text/csv;charset=utf-8;'});
   const a=document.createElement('a');
@@ -2423,16 +2432,31 @@ let linhasImport=[];
 // conferência deveria eliminar).
 function extrairResumoArquivo(texto){
   const linhas=texto.replace(/^﻿/,'').split(/\r\n|\n|\r/);
-  const i=linhas.findIndex(l=>/^#\s*resumo/i.test(l.trim()));
+  // O Excel costuma salvar a linha com aspas ("#RESUMO";...) e às vezes o
+  // resumo vem sem o "#". Aceita os dois, em qualquer posição do arquivo.
+  const ehResumo=l=>/^["'\s]*#?\s*resumo\b/i.test(l.trim());
+  const i=linhas.findIndex(ehResumo);
   if(i<0)return{resumo:null,texto};
-  // só ';' — vírgula é separador decimal aqui (150,00), não de campo
-  const partes=linhas[i].split(';').map(x=>x.trim());
-  const resumo={
-    linhas:parseInt(partes[1],10),
-    receber:lerValorBR(partes[2]),
-    pagar:lerValorBR(partes[3]),
-    transferencia:partes[4]!==undefined?lerValorBR(partes[4]):0
-  };
+  // Só ';' e tab separam campo — vírgula aqui é decimal (150,00).
+  const partes=linhas[i].split(/[;\t]/).map(x=>x.trim().replace(/^["']|["']$/g,''));
+  // Aceita "#RESUMO;4035;132241,88;156687,92;4865,16" (posição) e também
+  // "#RESUMO;linhas=4035;receber=132241,88;..." (rótulo, em qualquer ordem).
+  const rotulado={};
+  partes.forEach(p=>{
+    const m=p.match(/^([a-zçãéê]+)\s*[:=]\s*(.+)$/i);
+    if(m)rotulado[chaveCol(m[1])]=m[2];
+  });
+  const temRotulo=Object.keys(rotulado).length>0;
+  const numeros=partes.slice(1).filter(p=>p!==''&&!isNaN(lerValorBR(p)));
+  const resumo=temRotulo
+    ? {linhas:parseInt(rotulado.linhas,10),
+       receber:lerValorBR(rotulado.receber),
+       pagar:lerValorBR(rotulado.pagar),
+       transferencia:rotulado.transferencia!==undefined?lerValorBR(rotulado.transferencia):0}
+    : {linhas:parseInt(numeros[0],10),
+       receber:lerValorBR(numeros[1]),
+       pagar:lerValorBR(numeros[2]),
+       transferencia:numeros[3]!==undefined?lerValorBR(numeros[3]):0};
   linhas.splice(i,1);
   return{resumo,texto:linhas.join('\r\n')};
 }
@@ -2791,8 +2815,13 @@ function mostrarPreviaImport(texto,nomeArquivo){
             ?'<strong>Não bateu — importação bloqueada até corrigir o arquivo:</strong><br>'+diffsResumo.map(esc).join('<br>')
             :'Bateu certinho com a linha #RESUMO do arquivo.'}
         </div>`
-        :`<div class="text-sm text-muted">Este arquivo não tem uma linha <code>#RESUMO</code> — a conferência automática foi pulada.
-           Peça pro Claude incluir <code>#RESUMO;linhas;receber;pagar;transferência</code> no CSV.</div>`}
+        :`<div class="text-sm" style="color:var(--amber)">
+            <strong>Não achei a linha de resumo neste arquivo</strong> — a conferência automática foi pulada.<br>
+            <span class="text-muted">Acrescente uma linha assim em qualquer lugar do CSV (o modelo já vem com ela):</span><br>
+            <code>#RESUMO;${totLinhas};${totRec.toFixed(2).replace('.',',')};${totPag.toFixed(2).replace('.',',')};${totTransf.toFixed(2).replace('.',',')}</code><br>
+            <span class="text-muted">Ordem: linhas · total Receber · total Pagar · total Transferência.
+            Os valores acima são os que o sistema leu deste arquivo agora.</span>
+          </div>`}
     </div>
     <div class="card">
       <div class="ctitle">Resumo</div>
