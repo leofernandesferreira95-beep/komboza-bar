@@ -2805,6 +2805,63 @@ function renderFechamentoMes(){
   }));
 }
 
+// Agrupa os lançamentos pelo minuto em que foram criados. Importação entra
+// toda de uma vez, então cada lote é uma importação — inclusive as que não
+// ficaram no log (em 17/09 o log falhou por falta de espaço e 4.042
+// lançamentos ficaram órfãos, duplicando tudo sem deixar rastro).
+function lotesDeLancamentos(){
+  const grupos={};
+  getLanc().forEach(l=>{
+    const min=(l.criadoEm||'').slice(0,16);
+    if(!min)return;
+    const g=grupos[min]=grupos[min]||{min,n:0,ids:[],rec:0,pag:0,de:'',ate:'',origens:new Set()};
+    g.n++;g.ids.push(l.id);
+    if(l.tipo==='receber')g.rec+=l.valor||0;else g.pag+=l.valor||0;
+    const d=l.vencimento||'';
+    if(d){if(!g.de||d<g.de)g.de=d;if(!g.ate||d>g.ate)g.ate=d;}
+    g.origens.add(l.origem||'—');
+  });
+  return Object.values(grupos).sort((a,b)=>b.min.localeCompare(a.min));
+}
+
+function renderLotes(){
+  const box=$('imp-lotes');
+  if(!box)return;
+  const lotes=lotesDeLancamentos().filter(g=>g.n>1);
+  if(!lotes.length){box.innerHTML='<div class="text-sm text-muted">Nenhum lote com mais de um lançamento.</div>';return;}
+  const iguais=lotes.filter(g=>lotes.some(o=>o!==g&&o.n===g.n&&Math.abs(o.rec-g.rec)<0.01&&Math.abs(o.pag-g.pag)<0.01));
+  box.innerHTML=`
+    ${iguais.length>1?`<div class="text-sm" style="color:var(--amber);margin-bottom:10px">
+      ${iguais.length} lotes têm a mesma quantidade e os mesmos totais — é a cara de um arquivo importado mais de uma vez.
+      Confira as datas e remova os repetidos, deixando um só.</div>`:''}
+    ${lotes.map(g=>`
+      <div class="flex justify-between items-center gap8" style="padding:8px 0;border-bottom:1px solid var(--border)">
+        <div>
+          <strong>${esc(fmtData(g.min.slice(0,10)))} ${esc(g.min.slice(11,16))}</strong>
+          <div class="text-sm text-muted">
+            ${g.n} lançamento(s) · ${esc([...g.origens].join(', '))}<br>
+            entradas ${esc(fBRL(g.rec))} · saídas ${esc(fBRL(g.pag))}
+            ${g.de?` · dados de ${esc(fmtData(g.de))} a ${esc(fmtData(g.ate))}`:''}
+          </div>
+        </div>
+        <button class="btn btn-sm btn-s" data-lote="${esc(g.min)}" style="color:var(--erro);border-color:var(--erro)">Remover lote</button>
+      </div>`).join('')}`;
+  box.querySelectorAll('[data-lote]').forEach(b=>b.addEventListener('click',()=>{
+    const min=b.dataset.lote;
+    const g=lotesDeLancamentos().find(x=>x.min===min);
+    if(!g)return;
+    if(!confirm(`Remover os ${g.n} lançamento(s) criados em ${fmtData(min.slice(0,10))} ${min.slice(11,16)}?\n\n`+
+      `Entradas ${fBRL(g.rec)} · saídas ${fBRL(g.pag)}.\n\n`+
+      `Use isto só para tirar uma importação repetida. Não tem desfazer — baixe uma cópia antes (Backup).`))return;
+    const fora=new Set(g.ids);
+    marcarRemovidos(g.ids);
+    setLanc(getLanc().filter(l=>!fora.has(l.id)));
+    addHist('Removeu lote de lançamentos',`${g.n} lançamento(s) de ${min}`);
+    toast(`${g.n} lançamento(s) removidos.`);
+    renderLotes();renderImportLog();
+  }));
+}
+
 function renderImportLog(){
   const box=$('imp-log');
   if(!box)return;
@@ -2877,6 +2934,9 @@ function renderImportarPlanilha(){
     <div class="card" style="margin-bottom:16px">
       <div class="ctitle">Importações</div>
       <div id="imp-log"></div>
+      <div class="ctitle" style="margin-top:16px">Lotes no sistema</div>
+      <div class="text-sm text-muted" style="margin:-8px 0 10px">Cada lote é tudo que entrou de uma vez. Serve pra achar arquivo importado duas vezes, mesmo sem registro acima.</div>
+      <div id="imp-lotes"></div>
     </div>
     <div class="card" style="margin-bottom:16px">
       <div class="ctitle">Fechamento de mês</div>
@@ -2896,6 +2956,7 @@ function renderImportarPlanilha(){
     <div id="imp-previa"></div>`;
   $('btn-modelo').addEventListener('click',baixarModeloPlanilha);
   renderImportLog();
+  renderLotes();
   renderFechamentoMes();
   $('btn-fechar-mes').addEventListener('click',()=>{
     const ym=$('fm-mes').value;
