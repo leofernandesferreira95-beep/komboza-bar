@@ -468,7 +468,7 @@ db.enablePersistence({synchronizeTabs:true}).catch(e=>{
 });
 
 // Chaves que sincronizam com a nuvem. Chave nova só sincroniza se entrar aqui.
-const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','regrasOfx','falhasStone','ofxIgnorados','hist','mesesFechados','importacoes'];
+const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','regrasOfx','falhasStone','ofxIgnorados','hist','mesesFechados','importacoes','migracoes'];
 const fsSyncQ={};
 
 // ═══════════════════════════════════════════════
@@ -809,7 +809,9 @@ reloadCats();
 const FORMAS_REC=['Dinheiro','PIX','Cartão de débito','Cartão de crédito','Cartão CDL Brumadinho'];
 const FORMAS_PAGTO=['PIX','Boleto','Dinheiro','Transferência','Cartão de crédito','Cartão de débito'];
 const CORES_FORMA={'Dinheiro':'#5cb85c','PIX':'#4fb3d9','Cartão de débito':'#f5a623','Cartão de crédito':'#C0181B','Cartão CDL Brumadinho':'#9b6bd6'};
-const CAT_CACHE='Cachê de banda';
+// Cachê de show vai em Atração (lista oficial de 13/09/2026 — "Cachê de banda"
+// foi excluída por ser o mesmo conceito).
+const CAT_CACHE='Atração';
 const CAT_VENDAS='Vendas do dia';
 
 // ═══════════ CONTAS ═══════════
@@ -880,7 +882,11 @@ const CATS_OFICIAIS={
 const CATS_RENOMEAR={
   'Marketing / Divulgação':'Marketing',
   'Manutenção':'Manutenção Equipamentos',
-  'Sistema / Assinaturas':'Sistema Connectplug'
+  'Sistema / Assinaturas':'Sistema Connectplug',
+  // "Cachê de banda" era o nome que a agenda de shows usava; virou Atração,
+  // que é o nome da lista oficial. Renomear (em vez de excluir) leva junto os
+  // cachês já lançados.
+  'Cachê de banda':'Atração'
 };
 // Nunca somem do cadastro, mesmo fora da lista oficial: o sistema cria
 // lançamento com elas sozinho e ficariam apontando pra nome inexistente.
@@ -1051,6 +1057,7 @@ auth.onAuthStateChanged(async user=>{
     reloadCats();
     migrarLancamentos();
     garantirCategorias();
+    aplicarListaOficialUmaVez();
     removerEstimativaDinheiro();
     fsStartSync();
     iniciarSyncPeriodico();
@@ -1972,22 +1979,21 @@ function abrirListaOficial(){
   openM('m-catsofi');
 }
 
-$('catsofi-acao').addEventListener('click',()=>{
-  const p=planoListaOficial();
-  if(!confirm(`Aplicar a lista oficial?\n\n`+
-    `${p.renomear.length} renomeada(s), ${p.adicionar.length} adicionada(s), `+
-    `${p.mover.length} movida(s) de bloco, ${p.remover.length} excluída(s).\n\n`+
-    `Nenhum lançamento é apagado.`))return;
-
+function aplicarListaOficial(p){
   const cats=getCats();
   const chave=s=>chaveCol(s);
   const lancs=getLanc();
   let lancsMexidos=0;
 
-  // 1. Renomear, levando os lançamentos junto
+  // 1. Renomear, levando os lançamentos junto. Se o nome novo já existir no
+  // cadastro (ex.: Atração já criada e "Cachê de banda" virando Atração), o
+  // velho só sai da lista — senão ficariam duas iguais.
   p.renomear.forEach(({velho,novo})=>{
+    const jaExiste=['rec','var','fix'].some(g=>(cats[g]||[]).some(c=>chave(c)===chave(novo)));
     ['rec','var','fix'].forEach(g=>{
-      cats[g]=(cats[g]||[]).map(c=>chave(c)===chave(velho)?novo:c);
+      cats[g]=jaExiste
+        ? (cats[g]||[]).filter(c=>chave(c)!==chave(velho))
+        : (cats[g]||[]).map(c=>chave(c)===chave(velho)?novo:c);
     });
     lancs.forEach(l=>{
       if(chave(l.categoria||'')===chave(velho)){l.categoria=novo;l.atualizadoEm=agora();lancsMexidos++;}
@@ -2022,10 +2028,40 @@ $('catsofi-acao').addEventListener('click',()=>{
   setCats(cats);reloadCats();
   addHist('Aplicou lista oficial de categorias',
     `${p.renomear.length} renomeada(s), ${p.adicionar.length} adicionada(s), ${p.remover.length} excluída(s), ${lancsMexidos} lançamento(s) atualizado(s)`);
+  return lancsMexidos;
+}
+
+$('catsofi-acao').addEventListener('click',()=>{
+  const p=planoListaOficial();
+  if(!confirm(`Aplicar a lista oficial?\n\n`+
+    `${p.renomear.length} renomeada(s), ${p.adicionar.length} adicionada(s), `+
+    `${p.mover.length} movida(s) de bloco, ${p.remover.length} excluída(s).\n\n`+
+    `Nenhum lançamento é apagado.`))return;
+  const lancsMexidos=aplicarListaOficial(p);
   closeM('m-catsofi');
   toast(`Categorias atualizadas.${lancsMexidos?` ${lancsMexidos} lançamento(s) renomeado(s).`:''}`);
   renderCategorias();
 });
+
+// Aplica a lista oficial uma única vez, sozinho, no login — foi o que o Leo
+// pediu em 17/09/2026 ("cadastra vc"). Roda uma vez só: sem a marca, ele
+// desfaria toda vez qualquer categoria que ele criasse depois. Nunca exclui
+// categoria com lançamento (planoListaOficial já separa essas) e nunca apaga
+// lançamento: o cachê de show em "Cachê de banda" vai junto para "Atração".
+function aplicarListaOficialUmaVez(){
+  const m=ls.g('migracoes',{});
+  if(m.listaOficialV1)return;
+  const p=planoListaOficial();
+  const mexeu=p.renomear.length||p.adicionar.length||p.mover.length||p.remover.length;
+  if(mexeu){
+    const lancsMexidos=aplicarListaOficial(p);
+    console.info('[KOMBOZA] Lista oficial de categorias aplicada.',
+      {renomeadas:p.renomear.length,adicionadas:p.adicionar.length,movidas:p.mover.length,
+       excluidas:p.remover.length,lancamentos:lancsMexidos,emUso:p.emUso.map(e=>e.nome)});
+    setTimeout(()=>toast(`Categorias atualizadas para a lista oficial.${lancsMexidos?` ${lancsMexidos} lançamento(s) reclassificado(s).`:''}`),1200);
+  }
+  ls.s('migracoes',{...m,listaOficialV1:true});
+}
 
 // ── Exclusão de categoria ──
 // Nunca some com lançamento: se a categoria estiver em uso, a saída padrão é
