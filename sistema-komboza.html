@@ -547,21 +547,71 @@ const agora=()=>new Date().toISOString();
 // ═══════════════════════════════════════════════
 // ARMAZENAMENTO LOCAL + SINCRONIZAÇÃO
 // ═══════════════════════════════════════════════
-const ls={
-  g:(k,d=null)=>{try{const val=localStorage.getItem('kb_'+k);return val?JSON.parse(val):d;}catch{return d;}},
-  s:(k,val)=>{
-    try{localStorage.setItem('kb_'+k,JSON.stringify(val));}
-    catch(e){
-      // Antes só ia pro console: o aparelho ficava sem espaço, o dado não era
-      // salvo e a tela dizia que tinha dado certo.
-      console.error(e);
-      alert('NÃO FOI POSSÍVEL SALVAR no aparelho ('+(e.name||'erro')+').\n\n'+
-        'O que você acabou de fazer NÃO foi gravado. Baixe uma cópia (menu do seu nome > Backup) '+
-        'e me avise antes de continuar mexendo.');
-      throw e;
-    }
-    if(FS_KEYS.includes(k))fsSync(k,val);
+// O localStorage tem teto de ~5 MB e estourava com três meses de extrato
+// (QuotaExceededError). Os dados moram agora no IndexedDB, que tem espaço de
+// sobra, com uma cópia em memória (ARMAZEM) pra leitura continuar instantânea
+// e síncrona — é o que o resto do sistema espera. Guardamos a STRING JSON, não
+// o objeto, pra cada leitura devolver uma cópia nova, igual era antes.
+const ARMAZEM={};
+let idbConexao=null;
+function idbAbrir(){
+  if(idbConexao)return idbConexao;
+  idbConexao=new Promise((ok,falha)=>{
+    const req=indexedDB.open('komboza',1);
+    req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains('kb'))req.result.createObjectStore('kb');};
+    req.onsuccess=()=>ok(req.result);
+    req.onerror=()=>falha(req.error);
+  });
+  return idbConexao;
+}
+async function idbTodos(){
+  const db_=await idbAbrir();
+  return new Promise((ok,falha)=>{
+    const t=db_.transaction('kb','readonly').objectStore('kb');
+    const chaves=t.getAllKeys(),vals=t.getAll();
+    t.transaction.oncomplete=()=>{
+      const out={};chaves.result.forEach((k,i)=>out[k]=vals.result[i]);ok(out);
+    };
+    t.transaction.onerror=()=>falha(t.transaction.error);
+  });
+}
+function idbGravar(k,valorJson){
+  return idbAbrir().then(db_=>new Promise((ok,falha)=>{
+    const t=db_.transaction('kb','readwrite');
+    if(valorJson==null)t.objectStore('kb').delete(k); else t.objectStore('kb').put(valorJson,k);
+    t.oncomplete=ok;t.onerror=()=>falha(t.error);
+  }));
+}
+// Carrega tudo pra memória no início e traz o que estava no localStorage antigo.
+async function armazemIniciar(){
+  try{
+    const salvos=await idbTodos();
+    Object.assign(ARMAZEM,salvos);
+  }catch(e){console.warn('IndexedDB indisponível:',e.message);}
+  // Migração: o que já estava no localStorage vira IndexedDB e sai de lá,
+  // liberando o espaço que estava estourando.
+  for(const k of [...FS_KEYS]){
+    const antigo=localStorage.getItem('kb_'+k);
+    if(antigo==null)continue;
+    if(ARMAZEM[k]===undefined){ARMAZEM[k]=antigo;try{await idbGravar(k,antigo);}catch{}}
+    try{localStorage.removeItem('kb_'+k);}catch{}
   }
+}
+const ls={
+  g:(k,d=null)=>{try{const val=ARMAZEM[k];return val?JSON.parse(val):d;}catch{return d;}},
+  s:(k,val)=>{
+    const json=JSON.stringify(val);
+    ARMAZEM[k]=json;
+    idbGravar(k,json).catch(e=>{
+      // Antes só ia pro console: o aparelho não salvava e a tela dizia que sim.
+      console.error(e);
+      toast('NÃO consegui salvar no aparelho ('+(e.name||'erro')+'). Baixe uma cópia em Backup e me avise.',true);
+    });
+    if(FS_KEYS.includes(k))fsSync(k,val);
+  },
+  raw:k=>ARMAZEM[k],
+  setRaw:(k,json)=>{ARMAZEM[k]=json;idbGravar(k,json).catch(e=>console.error(e));},
+  limpar:k=>{delete ARMAZEM[k];idbGravar(k,null).catch(()=>{});}
 };
 
 let cloudHideTimer=null;
@@ -671,7 +721,7 @@ function fsSync(key,data){
     try{
       // Relê o valor local no momento do envio (pode ter mudado desde o agendamento)
       let payload=data;
-      try{const raw=localStorage.getItem('kb_'+key);if(raw!=null)payload=JSON.parse(raw);}catch{}
+      try{const raw=ls.raw(key);if(raw!=null)payload=JSON.parse(raw);}catch{}
       if(Array.isArray(payload)){
         try{
           const doc=await db.collection('appData').doc(key).get();
@@ -680,7 +730,7 @@ function fsSync(key,data){
             const mesclado=fsMesclarPorId(payload,Array.isArray(remoto)?remoto:[],key);
             if(JSON.stringify(mesclado)!==JSON.stringify(payload)){
               payload=mesclado;
-              localStorage.setItem('kb_'+key,JSON.stringify(mesclado));
+              ls.setRaw(key,JSON.stringify(mesclado));
             }
           }
         }catch(e){console.warn('mesclagem ['+key+']:',e.message);}
@@ -710,7 +760,7 @@ async function fsPull(){
       const doc=await db.collection('appData').doc(key).get();
       if(doc.exists&&doc.data()?.data!==undefined){
         const valor=await lerDocOuPartes(key,doc);
-        localStorage.setItem('kb_'+key,JSON.stringify(valor));
+        ls.setRaw(key,JSON.stringify(valor));
         fsUltimaSync[key]=Date.now();
       }
     }catch(e){console.warn('Firestore pull ['+key+']:',e.message);}
@@ -725,7 +775,7 @@ async function syncAgora(){
   syncEmAndamento=true;setCloudStatus('saving');
   try{
     await Promise.all(FS_KEYS.map(async key=>{
-      const raw=localStorage.getItem('kb_'+key);
+      const raw=ls.raw(key);
       if(raw==null)return;
       let parsed;try{parsed=JSON.parse(raw);}catch{return;}
       if(Array.isArray(parsed)){
@@ -736,7 +786,7 @@ async function syncAgora(){
             const mesclado=fsMesclarPorId(parsed,Array.isArray(remoto)?remoto:[],key);
             if(JSON.stringify(mesclado)!==JSON.stringify(parsed)){
               parsed=mesclado;
-              localStorage.setItem('kb_'+key,JSON.stringify(mesclado));
+              ls.setRaw(key,JSON.stringify(mesclado));
             }
           }
         }catch(e){console.warn('mesclagem ['+key+']:',e.message);}
@@ -775,8 +825,8 @@ function fsStartSync(){
       if(fsSyncQ[key])return;                    // gravação local entrou na fila enquanto buscava
       const novo=JSON.stringify(data);
       fsUltimaSync[key]=Date.now();
-      if(localStorage.getItem('kb_'+key)===novo)return;
-      localStorage.setItem('kb_'+key,novo);      // grava SEM disparar fsSync (evita laço)
+      if(ls.raw(key)===novo)return;
+      ls.setRaw(key,novo);      // grava SEM disparar fsSync (evita laço)
       if(key==='cats')reloadCats();
       atualizarTelaAtual();
     },err=>console.warn('onSnapshot ['+key+']:',err.message));
@@ -805,7 +855,7 @@ async function autoBackupDiario(){
     const dados={},parcial=[];
     let total=0;
     FS_KEYS.forEach(k=>{
-      const val=localStorage.getItem('kb_'+k);
+      const val=ls.raw(k);
       if(val==null)return;
       if(val.length>LIMITE_DOC||total+val.length>LIMITE_DOC){parcial.push(k);return;}
       dados[k]=val;total+=val.length;
@@ -1138,6 +1188,7 @@ auth.onAuthStateChanged(async user=>{
     $('tela-app').classList.remove('hidden');
     $('sb-av').textContent=APP.uid.iniciais;
     $('sb-nome').textContent=APP.uid.nome;
+    await armazemIniciar();   // carrega o IndexedDB pra memória antes de qualquer leitura
     await fsPull();
     reloadCats();
     migrarLancamentos();
@@ -1157,7 +1208,7 @@ auth.onAuthStateChanged(async user=>{
     pararSyncPeriodico();
     setCloudStatus('hide');
     // limpa os dados do aparelho ao sair (o computador do bar é compartilhado)
-    FS_KEYS.forEach(k=>localStorage.removeItem('kb_'+k));
+    FS_KEYS.forEach(k=>ls.limpar(k));
     localStorage.removeItem('kb_lastActive');
     voltarLoginUI();
   }
@@ -2505,6 +2556,9 @@ function lerDataBR(s){
   return null;
 }
 
+// Desenhar milhares de linhas de uma vez travava a tela (a tela preta que o
+// Leo viu). A prévia mostra as primeiras; a conta usa o arquivo todo.
+const MAX_PREVIA=200;
 let linhasImport=[];
 
 // Linha opcional no próprio CSV, tipo:
@@ -2880,7 +2934,7 @@ function mostrarPreviaImport(texto,nomeArquivo){
       <div class="twrap" style="max-height:320px;overflow-y:auto">
         <table>
           <thead><tr><th>Linha</th><th>Data</th><th>Descrição</th><th>Categoria</th><th style="text-align:right">Valor</th><th>Motivo</th></tr></thead>
-          <tbody>${comErro.map(l=>`
+          <tbody>${comErro.slice(0,MAX_PREVIA).map(l=>`
             <tr>
               <td class="num">${l.n}</td>
               <td class="num">${l.venc?esc(fmtData(l.venc)):'—'}</td>
@@ -2915,10 +2969,13 @@ function mostrarPreviaImport(texto,nomeArquivo){
         <div class="kcard"><div class="kval valor-pos num">${novas.length}</div><div class="klbl">Vão ser importadas</div></div>
         <div class="kcard"><div class="kval num" style="color:var(--text-3)">${dups.length}</div><div class="klbl">Já existem — ignoradas</div></div>
       </div>
+      ${linhasImport.length>MAX_PREVIA?`<div class="text-sm text-muted" style="margin-bottom:8px">
+        Mostrando as ${MAX_PREVIA} primeiras de ${linhasImport.length} linhas — desenhar todas travava a tela.
+        A conferência e a importação usam o arquivo inteiro.</div>`:''}
       <div class="twrap" style="max-height:420px;overflow-y:auto">
         <table>
           <thead><tr><th>Linha</th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th style="text-align:right">Valor</th><th>Situação</th></tr></thead>
-          <tbody>${linhasImport.map(l=>`
+          <tbody>${linhasImport.slice(0,MAX_PREVIA).map(l=>`
             <tr${l.dup?' style="opacity:.5"':''}>
               <td class="num">${l.n}</td>
               <td class="num">${l.venc?esc(fmtData(l.venc)):'—'}</td>
@@ -4280,12 +4337,12 @@ async function restaurarBackup(dia){
     const dados=doc.data().dados||{};
     Object.entries(dados).forEach(([chave,valorStr])=>{
       if(!FS_KEYS.includes(chave))return;
-      localStorage.setItem('kb_'+chave,valorStr);
+      ls.setRaw(chave,valorStr);
     });
     // Envia o estado restaurado pra nuvem sem passar pela mesclagem, que traria
     // de volta justamente o que se quer descartar
     await Promise.all(FS_KEYS.map(async k=>{
-      const raw=localStorage.getItem('kb_'+k);
+      const raw=ls.raw(k);
       if(raw==null)return;
       await gravarDocOuPartes(k,JSON.parse(raw));
       fsUltimaSync[k]=Date.now();
@@ -4323,7 +4380,7 @@ $('btn-zerar-lanc').addEventListener('click',async()=>{
   const btn=$('btn-zerar-lanc');btn.disabled=true;btn.textContent='Zerando...';
   try{
     for(const k of KEYS_ZERAR){
-      localStorage.setItem('kb_'+k,'[]');
+      ls.setRaw(k,'[]');
       await gravarDocOuPartes(k,[]);
       fsUltimaSync[k]=Date.now();
     }
