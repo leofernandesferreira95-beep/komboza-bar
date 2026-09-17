@@ -468,7 +468,7 @@ db.enablePersistence({synchronizeTabs:true}).catch(e=>{
 });
 
 // Chaves que sincronizam com a nuvem. Chave nova só sincroniza se entrar aqui.
-const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','regrasOfx','falhasStone','ofxIgnorados','hist','mesesFechados','importacoes','migracoes'];
+const FS_KEYS=['lancamentos','shows','comps','recorrentes','cats','regrasProduto','regrasOfx','falhasStone','ofxIgnorados','hist','mesesFechados','importacoes','migracoes','removidos'];
 const fsSyncQ={};
 
 // ═══════════════════════════════════════════════
@@ -643,12 +643,38 @@ function fsMesclarPorId(local,remoto,key){
     if(!r){resultado.push(l);return;}       // só existe aqui: criação local
     resultado.push(ts(r)>ts(l)?r:l);        // nos dois: fica o mais recente
   });
+  const apagados=idsRemovidos();
   remoto.forEach(r=>{
     if(vistos.has(r.id))return;
+    // Apagado de propósito aqui: nunca volta. Sem esta lista, desfazer uma
+    // importação não colava — os itens eram mais novos que a última sync, a
+    // mesclagem os tratava como "criados em outro aparelho" e trazia todos de
+    // volta. Foi assim que 4.042 lançamentos desfeitos viraram 8.086.
+    if(apagados.has(r.id))return;
     if(ts(r)>corte)resultado.push(r);       // item novo do outro aparelho: entra
     // senão: existia na última sync e sumiu daqui = foi apagado, continua apagado
   });
   return resultado;
+}
+
+// ── Lápides: ids apagados de propósito ──
+// Guardadas por 180 dias; depois disso o item já sumiu de todo aparelho.
+const getRemovidos=()=>ls.g('removidos',[]);
+let cacheRemovidos=null,cacheRemovidosEm=0;
+function idsRemovidos(){
+  if(cacheRemovidos&&Date.now()-cacheRemovidosEm<3000)return cacheRemovidos;
+  cacheRemovidos=new Set(getRemovidos().map(r=>r.id));
+  cacheRemovidosEm=Date.now();
+  return cacheRemovidos;
+}
+function marcarRemovidos(ids){
+  if(!ids||!ids.length)return;
+  const limite=Date.now()-180*24*3600*1000;
+  const atuais=getRemovidos().filter(r=>Date.parse(r.em||'')>limite);
+  const jaTem=new Set(atuais.map(r=>r.id));
+  ids.forEach(id=>{if(id&&!jaTem.has(id))atuais.push({id,em:agora()});});
+  cacheRemovidos=null;
+  ls.s('removidos',atuais);
 }
 
 // Decide se o payload deve passar pela mesclagem: precisa ser array de objetos
@@ -919,6 +945,7 @@ function desfazerImportacao(id){
   const imp=imps.find(i=>i.id===id);
   if(!imp||imp.desfeitaEm)return;
   const idsRemover=new Set(imp.lancIds||[]);
+  marcarRemovidos([...idsRemover]);   // sem isto a nuvem devolve tudo na próxima mesclagem
   const lancs=getLanc().filter(l=>!idsRemover.has(l.id));
   setLanc(lancs);
   imp.desfeitaEm=agora();
@@ -1194,6 +1221,7 @@ auth.onAuthStateChanged(async user=>{
     migrarLancamentos();
     garantirCategorias();
     aplicarListaOficialUmaVez();
+    reconciliarImportacoesDesfeitas();
     removerEstimativaDinheiro();
     fsStartSync();
     iniciarSyncPeriodico();
@@ -1669,6 +1697,7 @@ function excluirLanc(id){
   if(l.grupoId){
     const irmas=lancs.filter(x=>x.grupoId===l.grupoId).length;
     if(irmas>1&&confirm(`Este lançamento faz parte de ${irmas} parcelas.\n\nOK = apagar TODAS as parcelas\nCancelar = apagar só esta`)){
+      marcarRemovidos(lancs.filter(x=>x.grupoId===l.grupoId).map(x=>x.id));
       setLanc(lancs.filter(x=>x.grupoId!==l.grupoId));
       addHist('Excluiu parcelas: '+l.descricao);
       toast('Parcelas excluídas.');
@@ -1676,6 +1705,7 @@ function excluirLanc(id){
     }
   }
   if(!confirm('Excluir "'+l.descricao+'"?'))return;
+  marcarRemovidos([id]);
   setLanc(lancs.filter(x=>x.id!==id));
   addHist('Excluiu lançamento: '+l.descricao);
   toast('Lançamento excluído.');
@@ -2184,6 +2214,24 @@ $('catsofi-acao').addEventListener('click',()=>{
 // desfaria toda vez qualquer categoria que ele criasse depois. Nunca exclui
 // categoria com lançamento (planoListaOficial já separa essas) e nunca apaga
 // lançamento: o cachê de show em "Cachê de banda" vai junto para "Atração".
+// Importação marcada como desfeita cujos lançamentos voltaram (a mesclagem os
+// ressuscitava antes das lápides existirem). Remove de novo, agora pra valer.
+function reconciliarImportacoesDesfeitas(){
+  const desfeitas=getImportacoes().filter(i=>i.desfeitaEm&&(i.lancIds||[]).length);
+  if(!desfeitas.length)return;
+  const lancs=getLanc();
+  const presentes=new Set(lancs.map(l=>l.id));
+  const voltaram=[];
+  desfeitas.forEach(i=>i.lancIds.forEach(id=>{if(presentes.has(id))voltaram.push(id);}));
+  if(!voltaram.length)return;
+  const fora=new Set(voltaram);
+  marcarRemovidos(voltaram);
+  setLanc(lancs.filter(l=>!fora.has(l.id)));
+  addHist('Removeu duplicados de importação desfeita',`${voltaram.length} lançamento(s)`);
+  console.info('[KOMBOZA] Importação desfeita que tinha voltado:',voltaram.length,'lançamento(s) removidos.');
+  setTimeout(()=>toast(`${voltaram.length} lançamento(s) duplicados de uma importação desfeita foram removidos.`),1500);
+}
+
 function aplicarListaOficialUmaVez(){
   const m=ls.g('migracoes',{});
   if(m.listaOficialV1)return;
@@ -2944,6 +2992,15 @@ function mostrarPreviaImport(texto,nomeArquivo){
               <td style="color:var(--erro)">${esc(l.erros.join(', '))}</td>
             </tr>`).join('')}</tbody>
         </table>
+      </div>
+    </div>`:''}
+    ${linhasImport.length&&!linhasImport.some(l=>l.chave)?`
+    <div class="card" style="margin-bottom:16px;border-color:var(--amber)">
+      <div class="ctitle" style="color:var(--amber)">Arquivo sem coluna Chave</div>
+      <div class="text-sm text-muted">
+        Sem chave (STONE ID, FITID ou qualquer id único), não tenho como saber se uma linha já foi
+        importada antes — importar este arquivo duas vezes lança tudo em dobro, e nada avisa.
+        Se puder, peça pro Claude incluir a coluna <strong>Chave</strong>.
       </div>
     </div>`:''}
     <div class="card" style="margin-bottom:16px">
