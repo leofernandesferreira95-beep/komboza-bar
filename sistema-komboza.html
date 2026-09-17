@@ -550,7 +550,16 @@ const agora=()=>new Date().toISOString();
 const ls={
   g:(k,d=null)=>{try{const val=localStorage.getItem('kb_'+k);return val?JSON.parse(val):d;}catch{return d;}},
   s:(k,val)=>{
-    try{localStorage.setItem('kb_'+k,JSON.stringify(val));}catch(e){console.error(e);}
+    try{localStorage.setItem('kb_'+k,JSON.stringify(val));}
+    catch(e){
+      // Antes só ia pro console: o aparelho ficava sem espaço, o dado não era
+      // salvo e a tela dizia que tinha dado certo.
+      console.error(e);
+      alert('NÃO FOI POSSÍVEL SALVAR no aparelho ('+(e.name||'erro')+').\n\n'+
+        'O que você acabou de fazer NÃO foi gravado. Baixe uma cópia (menu do seu nome > Backup) '+
+        'e me avise antes de continuar mexendo.');
+      throw e;
+    }
     if(FS_KEYS.includes(k))fsSync(k,val);
   }
 };
@@ -596,6 +605,63 @@ function fsMesclarPorId(local,remoto,key){
 // com id, de um lado ou do outro.
 function ehArrayComId(a){return Array.isArray(a)&&a.length>0&&a[0]&&a[0].id!==undefined;}
 
+// ═══════════ GRAVAÇÃO EM PARTES ═══════════
+// Documento do Firestore tem teto de 1 MiB. Três meses de extrato (4.035
+// lançamentos) dão ~2,5 MB: a gravação era recusada, o erro só ia pro console,
+// e no login seguinte o servidor devolvia a versão velha por cima — a
+// importação inteira sumia sem ninguém ver. Agora, array grande vai fatiado em
+// appData/<chave>__p0, __p1... e o documento principal guarda só quantas partes
+// são. Quem lê (fsPull/onSnapshot) remonta o array inteiro.
+const LIMITE_DOC=800*1024;       // margem sobre o 1 MiB do Firestore
+const ALVO_PARTE=400*1024;       // tamanho de cada fatia
+const refApp=k=>db.collection('appData').doc(k);
+const nomeParte=(k,i)=>`${k}__p${i}`;
+
+// Divide o array em fatias que caibam com folga num documento. Separada pra
+// poder ser testada sozinha, sem Firestore.
+function fatiar(arr,bytes){
+  const qtd=Math.max(1,Math.ceil(bytes/ALVO_PARTE));
+  const porFatia=Math.ceil(arr.length/qtd);
+  const out=[];
+  for(let i=0;i<arr.length;i+=porFatia)out.push(arr.slice(i,i+porFatia));
+  return out;
+}
+
+async function gravarDocOuPartes(key,payload){
+  const bruto=JSON.stringify(payload??null);
+  const carimbo=firebase.firestore.FieldValue.serverTimestamp();
+  // Quantas partes existem hoje, pra apagar as que sobrarem
+  let partesAntigas=0;
+  try{const d=await refApp(key).get();partesAntigas=d.exists?(d.data()?.partes||0):0;}catch{}
+
+  if(!Array.isArray(payload)||bruto.length<=LIMITE_DOC){
+    const lote=db.batch();
+    lote.set(refApp(key),{data:payload,partes:0,ts:carimbo});
+    for(let i=0;i<partesAntigas;i++)lote.delete(refApp(nomeParte(key,i)));
+    await lote.commit();
+    return;
+  }
+
+  const fatias=fatiar(payload,bruto.length);
+  const qtdPartes=fatias.length;
+  const lote=db.batch();
+  fatias.forEach((fatia,i)=>lote.set(refApp(nomeParte(key,i)),{data:fatia,ts:carimbo}));
+  // O documento principal fica só com a contagem: é a mudança dele que avisa
+  // os outros aparelhos de que tem coisa nova pra buscar.
+  lote.set(refApp(key),{data:[],partes:qtdPartes,ts:carimbo});
+  for(let i=qtdPartes;i<partesAntigas;i++)lote.delete(refApp(nomeParte(key,i)));
+  await lote.commit();
+}
+
+// Remonta o array a partir das partes. Recebe o documento principal já lido.
+async function lerDocOuPartes(key,doc){
+  const d=doc.data()||{};
+  if(!d.partes)return d.data;
+  const partes=await Promise.all(
+    Array.from({length:d.partes},(_,i)=>refApp(nomeParte(key,i)).get()));
+  return partes.flatMap(p=>(p.exists?(p.data()?.data||[]):[]));
+}
+
 function fsSync(key,data){
   if(!PODE_GRAVAR_NUVEM)return;   // cópia local: salva só no aparelho
   if(fsSyncQ[key])clearTimeout(fsSyncQ[key]);
@@ -609,7 +675,7 @@ function fsSync(key,data){
       if(Array.isArray(payload)){
         try{
           const doc=await db.collection('appData').doc(key).get();
-          const remoto=doc.exists?doc.data()?.data:null;
+          const remoto=doc.exists?await lerDocOuPartes(key,doc):null;
           if(ehArrayComId(remoto)||ehArrayComId(payload)){
             const mesclado=fsMesclarPorId(payload,Array.isArray(remoto)?remoto:[],key);
             if(JSON.stringify(mesclado)!==JSON.stringify(payload)){
@@ -619,7 +685,7 @@ function fsSync(key,data){
           }
         }catch(e){console.warn('mesclagem ['+key+']:',e.message);}
       }
-      await db.collection('appData').doc(key).set({data:payload,ts:firebase.firestore.FieldValue.serverTimestamp()});
+      await gravarDocOuPartes(key,payload);
       fsUltimaSync[key]=Date.now();
       fsPendentes--;
       if(fsPendentes<=0){fsPendentes=0;setCloudStatus('saved');}
@@ -627,6 +693,9 @@ function fsSync(key,data){
       fsPendentes=Math.max(0,fsPendentes-1);
       setCloudStatus('error');
       console.warn('Firestore sync ['+key+']:',e.message);
+      // Falha de nuvem some da vista se ficar só no console — e foi assim que
+      // uma importação inteira pareceu ter dado certo sem ter subido nada.
+      toast('Não consegui salvar na nuvem ('+key+'): '+e.message+'. O dado está no aparelho; não limpe o navegador.',true);
     }finally{
       // Só libera se nenhuma gravação nova foi agendada nesse meio-tempo
       if(fsSyncQ[key]===meuTimer)delete fsSyncQ[key];
@@ -640,7 +709,8 @@ async function fsPull(){
     try{
       const doc=await db.collection('appData').doc(key).get();
       if(doc.exists&&doc.data()?.data!==undefined){
-        localStorage.setItem('kb_'+key,JSON.stringify(doc.data().data));
+        const valor=await lerDocOuPartes(key,doc);
+        localStorage.setItem('kb_'+key,JSON.stringify(valor));
         fsUltimaSync[key]=Date.now();
       }
     }catch(e){console.warn('Firestore pull ['+key+']:',e.message);}
@@ -661,7 +731,7 @@ async function syncAgora(){
       if(Array.isArray(parsed)){
         try{
           const doc=await db.collection('appData').doc(key).get();
-          const remoto=doc.exists?doc.data()?.data:null;
+          const remoto=doc.exists?await lerDocOuPartes(key,doc):null;
           if(ehArrayComId(remoto)||ehArrayComId(parsed)){
             const mesclado=fsMesclarPorId(parsed,Array.isArray(remoto)?remoto:[],key);
             if(JSON.stringify(mesclado)!==JSON.stringify(parsed)){
@@ -671,7 +741,7 @@ async function syncAgora(){
           }
         }catch(e){console.warn('mesclagem ['+key+']:',e.message);}
       }
-      await db.collection('appData').doc(key).set({data:parsed,ts:firebase.firestore.FieldValue.serverTimestamp()});
+      await gravarDocOuPartes(key,parsed);
       fsUltimaSync[key]=Date.now();
     }));
     setCloudStatus('saved');
@@ -688,7 +758,7 @@ let fsUnsub=[];
 function fsStartSync(){
   fsStopSync();
   FS_KEYS.forEach(key=>{
-    const un=db.collection('appData').doc(key).onSnapshot(doc=>{
+    const un=db.collection('appData').doc(key).onSnapshot(async doc=>{
       if(doc.metadata.hasPendingWrites)return;   // eco da própria gravação
       // Alteração local ainda na fila (os 600ms antes de enviar): a versão do
       // servidor é mais velha. Sem isso, garantirCategorias no login gravava a
@@ -696,8 +766,13 @@ function fsStartSync(){
       // agendado relia o localStorage já sobrescrito — a mudança sumia calada.
       if(fsSyncQ[key])return;
       if(!doc.exists)return;
-      const data=doc.data()?.data;
+      if(doc.data()?.data===undefined)return;
+      // Array grande vem fatiado: o documento principal só avisa que mudou,
+      // as partes são buscadas aqui (ver gravarDocOuPartes).
+      let data;
+      try{data=await lerDocOuPartes(key,doc);}catch(e){console.warn('partes ['+key+']:',e.message);return;}
       if(data===undefined)return;
+      if(fsSyncQ[key])return;                    // gravação local entrou na fila enquanto buscava
       const novo=JSON.stringify(data);
       fsUltimaSync[key]=Date.now();
       if(localStorage.getItem('kb_'+key)===novo)return;
@@ -724,10 +799,20 @@ async function autoBackupDiario(){
     const hoje=hojeISO();
     const ref=db.collection('backups').doc(hoje);
     if((await ref.get()).exists)return;
-    const dados={};
-    FS_KEYS.forEach(k=>{const val=localStorage.getItem('kb_'+k);if(val!=null)dados[k]=val;});
-    if(!Object.keys(dados).length)return;
-    await ref.set({data:hoje,por:APP.uid?.nome||'—',ts:firebase.firestore.FieldValue.serverTimestamp(),dados});
+    // A cópia do dia é UM documento, e documento do Firestore para em 1 MiB.
+    // Chave que sozinha estoura o teto fica de fora e é anotada em "parcial",
+    // senão a cópia inteira era recusada e não existia backup nenhum.
+    const dados={},parcial=[];
+    let total=0;
+    FS_KEYS.forEach(k=>{
+      const val=localStorage.getItem('kb_'+k);
+      if(val==null)return;
+      if(val.length>LIMITE_DOC||total+val.length>LIMITE_DOC){parcial.push(k);return;}
+      dados[k]=val;total+=val.length;
+    });
+    if(!Object.keys(dados).length&&!parcial.length)return;
+    await ref.set({data:hoje,por:APP.uid?.nome||'—',ts:firebase.firestore.FieldValue.serverTimestamp(),dados,parcial});
+    if(parcial.length)console.warn('[KOMBOZA] Cópia do dia sem:',parcial.join(', '),'— grande demais para um documento. Use Backup > Baixar cópia (JSON).');
     const todos=await db.collection('backups').orderBy('data','desc').get();
     todos.docs.slice(30).forEach(d=>d.ref.delete().catch(()=>{}));   // guarda 30 dias
   }catch(e){console.warn('autoBackup:',e.message);}
@@ -4202,7 +4287,7 @@ async function restaurarBackup(dia){
     await Promise.all(FS_KEYS.map(async k=>{
       const raw=localStorage.getItem('kb_'+k);
       if(raw==null)return;
-      await db.collection('appData').doc(k).set({data:JSON.parse(raw),ts:firebase.firestore.FieldValue.serverTimestamp()});
+      await gravarDocOuPartes(k,JSON.parse(raw));
       fsUltimaSync[k]=Date.now();
     }));
     reloadCats();
@@ -4239,7 +4324,7 @@ $('btn-zerar-lanc').addEventListener('click',async()=>{
   try{
     for(const k of KEYS_ZERAR){
       localStorage.setItem('kb_'+k,'[]');
-      await db.collection('appData').doc(k).set({data:[],ts:firebase.firestore.FieldValue.serverTimestamp()});
+      await gravarDocOuPartes(k,[]);
       fsUltimaSync[k]=Date.now();
     }
     addHist('Zerou lançamentos',`${n} lançamento(s) apagados; shows e agenda mantidos`);

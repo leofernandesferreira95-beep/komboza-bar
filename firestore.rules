@@ -13,19 +13,21 @@ service cloud.firestore {
     }
 
     // Dados do sistema: um documento por chave (lancamentos, shows, comps...).
+    // Array grande é fatiado em <chave>__p0, __p1... e o documento principal
+    // guarda "partes" com a contagem — documento do Firestore para em 1 MiB.
     // A escrita só aceita o formato exato usado pelo app ({data, ts}), então
     // uma credencial vazada não consegue gravar lixo em outro formato.
     match /appData/{chave} {
       allow read: if autorizado();
       allow write: if autorizado()
-        && request.resource.data.keys().hasOnly(['data', 'ts']);
+        && request.resource.data.keys().hasOnly(['data', 'ts', 'partes']);
     }
 
     // Cópias automáticas diárias, gravadas pelo próprio app (30 dias).
     match /backups/{dia} {
       allow read, delete: if autorizado();
       allow create, update: if autorizado()
-        && request.resource.data.keys().hasOnly(['data', 'por', 'ts', 'dados']);
+        && request.resource.data.keys().hasOnly(['data', 'por', 'ts', 'dados', 'parcial']);
     }
 
     // Qualquer outra coleção: negada. Não existe nada além disso no sistema.
