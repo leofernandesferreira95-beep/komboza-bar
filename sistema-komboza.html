@@ -780,17 +780,38 @@ function fsSync(key,data){
   fsSyncQ[key]=meuTimer;
 }
 
+// Tira da lista o que foi apagado de propósito. A mesclagem já respeitava as
+// lápides, mas a LEITURA não: baixar do servidor sobrescrevia o local inteiro e
+// trazia de volta o que tinha acabado de ser removido. Quando isso acontece,
+// devolvemos a versão limpa pro servidor pra ele parar de insistir.
+function semRemovidos(key,valor){
+  if(!Array.isArray(valor))return{valor,limpou:0};
+  const apagados=idsRemovidos();
+  if(!apagados.size)return{valor,limpou:0};
+  const limpo=valor.filter(x=>!(x&&apagados.has(x.id)));
+  return{valor:limpo,limpou:valor.length-limpo.length};
+}
+
 async function fsPull(){
-  await Promise.all(FS_KEYS.map(async key=>{
+  // As lápides vêm primeiro: sem elas carregadas, o que foi apagado voltaria
+  // do servidor antes de haver com o que comparar.
+  await puxarChave('removidos');
+  await Promise.all(FS_KEYS.filter(k=>k!=='removidos').map(puxarChave));
+}
+async function puxarChave(key){
     try{
       const doc=await db.collection('appData').doc(key).get();
       if(doc.exists&&doc.data()?.data!==undefined){
-        const valor=await lerDocOuPartes(key,doc);
-        ls.setRaw(key,JSON.stringify(valor));
+        let valor=await lerDocOuPartes(key,doc);
+        const {valor:limpo,limpou}=semRemovidos(key,valor);
+        ls.setRaw(key,JSON.stringify(limpo));
         fsUltimaSync[key]=Date.now();
+        if(limpou){
+          console.info('[KOMBOZA] '+limpou+' item(ns) apagados voltaram do servidor ['+key+'] — reenviando sem eles.');
+          gravarDocOuPartes(key,limpo).catch(e=>console.warn('reenvio ['+key+']:',e.message));
+        }
       }
     }catch(e){console.warn('Firestore pull ['+key+']:',e.message);}
-  }));
 }
 
 let syncEmAndamento=false;
@@ -849,6 +870,9 @@ function fsStartSync(){
       try{data=await lerDocOuPartes(key,doc);}catch(e){console.warn('partes ['+key+']:',e.message);return;}
       if(data===undefined)return;
       if(fsSyncQ[key])return;                    // gravação local entrou na fila enquanto buscava
+      const {valor:limpo,limpou}=semRemovidos(key,data);
+      data=limpo;
+      if(limpou)gravarDocOuPartes(key,limpo).catch(e=>console.warn('reenvio ['+key+']:',e.message));
       const novo=JSON.stringify(data);
       fsUltimaSync[key]=Date.now();
       if(ls.raw(key)===novo)return;
