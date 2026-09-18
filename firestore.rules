@@ -19,7 +19,13 @@ service cloud.firestore {
     // uma credencial vazada não consegue gravar lixo em outro formato.
     match /appData/{chave} {
       allow read: if autorizado();
-      allow write: if autorizado()
+      // Apagar precisa de regra própria: num delete o request.resource é nulo, e
+      // conferir os campos dele derrubava a operação inteira com "permissão
+      // insuficiente". Era isso que impedia a gravação em partes de apagar as
+      // fatias que sobravam — o lote todo falhava e a nuvem ficava com a versão
+      // velha, devolvendo os lançamentos apagados.
+      allow delete: if autorizado();
+      allow create, update: if autorizado()
         && request.resource.data.keys().hasOnly(['data', 'ts', 'partes']);
     }
 
