@@ -124,6 +124,7 @@ th{text-align:left;font-family:'Oswald',sans-serif;font-size:10.5px;font-weight:
 td{padding:11px 12px;border-bottom:1px solid rgba(243,236,224,0.04);font-size:13px;}
 tr:last-child td{border-bottom:none;}
 tbody tr:hover td{background:rgba(243,236,224,0.025);}
+.sel-filtro{padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:13px;font-family:'Inter',sans-serif}
 .sbar{display:flex;align-items:center;gap:10px;background:var(--surface2);border:1.5px solid var(--border);border-radius:8px;padding:0 12px;transition:border-color .15s;}
 .sbar:focus-within{border-color:var(--accent);}
 .sbar input{border:none;background:none;outline:none;padding:9px 0;flex:1;font-size:13px;font-family:'Inter',sans-serif;color:var(--text);}
@@ -541,6 +542,7 @@ const nomeMes=ym=>{
   return s.charAt(0).toUpperCase()+s.slice(1);
 };
 const somaMes=(ym,n)=>{const[y,m]=ym.split('-').map(Number);const d=new Date(y,m-1+n,1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');};
+const fimDoMes=ym=>{const[y,m]=ym.split('-').map(Number);return ym+'-'+String(new Date(y,m,0).getDate()).padStart(2,'0');};
 const uid=p=>p+'_'+Date.now()+'_'+Math.random().toString(36).slice(2,6);
 const agora=()=>new Date().toISOString();
 
@@ -1327,11 +1329,26 @@ function renderPainel(){
   // pelo mesmo valor — o "Sobrou" ficava certo, mas o faturamento do mês
   // aparecia maior do que foi. Saldo por conta continua contando as duas
   // pernas, que é justamente o que move o dinheiro de conta.
-  const lancs=getLanc().filter(noResultado);
-  // Receita entra no mês em que foi RECEBIDA; despesa, no mês em que foi paga.
+  // Filtros do painel: sem eles só dava pra olhar o mês inteiro, e não havia
+  // como perguntar "quanto foi de Prolabore (Leo)?" sem sair da tela.
+  if(!APP.fPainel)APP.fPainel={cat:'',conta:'',forma:'',origem:'',busca:'',de:'',ate:''};
+  const fp=APP.fPainel;
+  // Período: por padrão o mês escolhido nas setas; de/até sobrepõem quando
+  // preenchidos, pra poder olhar uma semana, um trimestre ou o ano inteiro.
+  const de=fp.de||ym+'-01';
+  const ate=fp.ate||fimDoMes(ym);
+  const dentro=d=>!!d&&d>=de&&d<=ate;
+  const lancs=getLanc().filter(noResultado).filter(l=>
+    (!fp.cat||(l.categoria||'')===fp.cat)&&
+    (!fp.conta||(l.conta||'Sicredi')===fp.conta)&&
+    (!fp.forma||(l.forma||'')===fp.forma)&&
+    (!fp.origem||(l.origem||'')===fp.origem)&&
+    (!fp.busca||buscaCasa(fp.busca,l.descricao,l.categoria,l.forma,l.obs)));
+  const filtrando=!!(fp.cat||fp.conta||fp.forma||fp.origem||fp.busca||fp.de||fp.ate);
+  // Receita entra quando foi RECEBIDA; despesa, quando foi paga.
   // Pendente conta pelo vencimento — é o que ainda vai cair.
-  const pagosNoMes=l=>l.pago&&(l.dataPagamento||l.vencimento||'').startsWith(ym);
-  const doMes=l=>(l.vencimento||'').startsWith(ym);
+  const pagosNoMes=l=>l.pago&&dentro(l.dataPagamento||l.vencimento||'');
+  const doMes=l=>dentro(l.vencimento||'');
 
   const entrou=lancs.filter(l=>l.tipo==='receber'&&pagosNoMes(l)).reduce((s,l)=>s+l.valor,0);
   const saiu=lancs.filter(l=>l.tipo==='pagar'&&pagosNoMes(l)).reduce((s,l)=>s+l.valor,0);
@@ -1340,8 +1357,9 @@ function renderPainel(){
   const sobrou=entrou-saiu;
 
   // Comparação com o mês anterior
-  const ymAnt=somaMes(ym,-1);
-  const entrouAnt=lancs.filter(l=>l.tipo==='receber'&&l.pago&&(l.dataPagamento||l.vencimento||'').startsWith(ymAnt)).reduce((s,l)=>s+l.valor,0);
+  const dias=Math.max(1,Math.round((Date.parse(ate)-Date.parse(de))/86400000)+1);
+  const antDe=somaDias(de,-dias),antAte=somaDias(de,-1);
+  const entrouAnt=lancs.filter(l=>l.tipo==='receber'&&l.pago&&((d)=>d>=antDe&&d<=antAte)(l.dataPagamento||l.vencimento||'')).reduce((s,l)=>s+l.valor,0);
   const varPct=entrouAnt>0?Math.round(((entrou-entrouAnt)/entrouAnt)*100):null;
 
   // Recebido por forma de pagamento — o corte que fecha o caixa
@@ -1365,7 +1383,7 @@ function renderPainel(){
   const maxV=Math.max(...meses.map(m=>Math.max(m.rec,m.pag)),1);
   const BH=110;
 
-  // Gastos por categoria no mês
+  // Gastos por categoria no período
   const porCat={};
   lancs.filter(l=>l.tipo==='pagar'&&pagosNoMes(l)).forEach(l=>{
     const c=l.categoria||'Sem categoria';porCat[c]=(porCat[c]||0)+l.valor;
@@ -1402,11 +1420,39 @@ function renderPainel(){
       ${ym!==ymAtual()?'<button class="btn-g" id="mes-hoje">voltar pro mês atual</button>':''}
     </div>
 
+    <div class="card" style="margin-bottom:16px">
+      <div class="flex gap8 items-center" style="flex-wrap:wrap">
+        <div class="sbar" style="flex:1;min-width:190px"><input type="text" id="pf-busca" placeholder="Buscar descrição, categoria, observação..." value="${esc(fp.busca||'')}"></div>
+        <select id="pf-cat" class="sel-filtro"><option value="">Todas as categorias</option>
+          ${[...new Set([...CAT_REC,...CAT_PAG,...CATS_NEUTRAS])].map(c=>`<option ${fp.cat===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+        <select id="pf-forma" class="sel-filtro"><option value="">Todas as formas</option>
+          ${[...new Set([...FORMAS_REC,...FORMAS_PAGTO])].map(f=>`<option ${fp.forma===f?'selected':''}>${esc(f)}</option>`).join('')}</select>
+        <select id="pf-conta" class="sel-filtro"><option value="">Todas as contas</option>
+          ${CONTAS.map(c=>`<option ${fp.conta===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+        <select id="pf-origem" class="sel-filtro"><option value="">Toda origem</option>
+          ${[...new Set(getLanc().map(l=>l.origem).filter(Boolean))].sort().map(o=>`<option ${fp.origem===o?'selected':''}>${esc(o)}</option>`).join('')}</select>
+      </div>
+      <div class="flex gap8 items-center" style="flex-wrap:wrap;margin-top:8px">
+        <span class="text-sm text-muted">Período</span>
+        <input type="date" id="pf-de" class="sel-filtro" value="${esc(de)}">
+        <span class="text-sm text-muted">até</span>
+        <input type="date" id="pf-ate" class="sel-filtro" value="${esc(ate)}">
+        <button class="btn btn-s btn-sm" data-per="mes">Este mês</button>
+        <button class="btn btn-s btn-sm" data-per="3m">3 meses</button>
+        <button class="btn btn-s btn-sm" data-per="ano">Este ano</button>
+        <button class="btn btn-s btn-sm" data-per="tudo">Tudo</button>
+        ${filtrando?'<button class="btn btn-s btn-sm" id="pf-limpar" style="color:var(--erro);border-color:var(--erro)">Limpar</button>':''}
+      </div>
+      ${filtrando?`<div class="text-sm" style="color:var(--amber);margin-top:10px">
+        Mostrando ${esc(fmtData(de))} a ${esc(fmtData(ate))}${fp.cat?' · <strong>'+esc(fp.cat)+'</strong>':''}${fp.forma?' · '+esc(fp.forma):''}${fp.conta?' · conta '+esc(fp.conta):''}${fp.origem?' · origem '+esc(fp.origem):''}${fp.busca?' · "'+esc(fp.busca)+'"':''}
+        — todos os números abaixo são só desse recorte.</div>`:''}
+    </div>
+
     <div class="fin-kgrid">
       <div class="kcard">
         <div class="kval valor-rec num">${esc(fBRL(entrou))}</div>
         <div class="klbl">Entrou</div>
-        ${varPct!==null?`<div class="ksub">${varPct>=0?'▲':'▼'} ${Math.abs(varPct)}% vs. mês anterior</div>`:(aReceber>0?`<div class="ksub">+ ${esc(fBRL(aReceber))} a receber</div>`:'')}
+        ${varPct!==null?`<div class="ksub">${varPct>=0?'▲':'▼'} ${Math.abs(varPct)}% vs. período anterior</div>`:(aReceber>0?`<div class="ksub">+ ${esc(fBRL(aReceber))} a receber</div>`:'')}
       </div>
       <div class="kcard">
         <div class="kval valor-pag num">${esc(fBRL(saiu))}</div>
@@ -1415,13 +1461,13 @@ function renderPainel(){
       </div>
       <div class="kcard">
         <div class="kval ${sobrou>=0?'valor-pos':'valor-neg'} num">${esc(fBRL(sobrou))}</div>
-        <div class="klbl">Sobrou no mês</div>
+        <div class="klbl">Sobrou no período</div>
         <div class="ksub">${sobrou>=0?'No azul':'No vermelho'}</div>
       </div>
       <div class="kcard">
         <div class="kval num" style="color:var(--amber)">${esc(fBRL(aPagar))}</div>
         <div class="klbl">Ainda a pagar</div>
-        <div class="ksub">${aReceber>0?'e '+esc(fBRL(aReceber))+' a receber':'no mês'}</div>
+        <div class="ksub">${aReceber>0?'e '+esc(fBRL(aReceber))+' a receber':'no período'}</div>
       </div>
     </div>
 
@@ -1512,9 +1558,28 @@ function renderPainel(){
     </div>`;
 
   $('btn-novo-lanc').addEventListener('click',()=>abrirLancamento(null));
-  $('mes-ant').addEventListener('click',()=>{APP.mesPainel=somaMes(ym,-1);renderPainel();});
-  $('mes-prox').addEventListener('click',()=>{APP.mesPainel=somaMes(ym,1);renderPainel();});
-  $('mes-hoje')?.addEventListener('click',()=>{APP.mesPainel=ymAtual();renderPainel();});
+  const aplicar=()=>{
+    fp.busca=$('pf-busca').value;fp.cat=$('pf-cat').value;fp.forma=$('pf-forma').value;
+    fp.conta=$('pf-conta').value;fp.origem=$('pf-origem').value;
+    fp.de=$('pf-de').value;fp.ate=$('pf-ate').value;
+    renderPainel();
+  };
+  ['pf-cat','pf-forma','pf-conta','pf-origem','pf-de','pf-ate'].forEach(id=>$(id).addEventListener('change',aplicar));
+  // Busca redesenha só ao sair do campo ou no Enter, pra não perder o foco a cada letra
+  $('pf-busca').addEventListener('change',aplicar);
+  $('main').querySelectorAll('[data-per]').forEach(b=>b.addEventListener('click',()=>{
+    const p=b.dataset.per,hj=hojeISO();
+    if(p==='mes'){APP.mesPainel=ymAtual();fp.de='';fp.ate='';}
+    else if(p==='3m'){fp.de=somaMes(hj.slice(0,7),-2)+'-01';fp.ate=fimDoMes(hj.slice(0,7));}
+    else if(p==='ano'){fp.de=hj.slice(0,4)+'-01-01';fp.ate=hj.slice(0,4)+'-12-31';}
+    else{const ds=getLanc().map(l=>l.dataPagamento||l.vencimento||'').filter(Boolean).sort();
+      fp.de=ds[0]||hj;fp.ate=ds[ds.length-1]||hj;}
+    renderPainel();
+  }));
+  $('pf-limpar')?.addEventListener('click',()=>{APP.fPainel={cat:'',conta:'',forma:'',origem:'',busca:'',de:'',ate:''};renderPainel();});
+  $('mes-ant').addEventListener('click',()=>{APP.mesPainel=somaMes(ym,-1);fp.de='';fp.ate='';renderPainel();});
+  $('mes-prox').addEventListener('click',()=>{APP.mesPainel=somaMes(ym,1);fp.de='';fp.ate='';renderPainel();});
+  $('mes-hoje')?.addEventListener('click',()=>{APP.mesPainel=ymAtual();fp.de='';fp.ate='';renderPainel();});
   $('main').querySelectorAll('[data-ir]').forEach(el=>el.addEventListener('click',()=>navTo(el.dataset.ir)));
 }
 
@@ -1534,13 +1599,21 @@ function renderLista(tipo){
       <div><h1>${titulo}</h1><p id="lista-resumo"></p></div>
       <button class="btn btn-p" id="btn-novo-lanc">+ Lançamento</button>
     </div>
-    <div class="flex gap8 items-center" style="margin-bottom:16px;flex-wrap:wrap">
+    <div class="flex gap8 items-center" style="margin-bottom:10px;flex-wrap:wrap">
       <div class="sbar" style="flex:1;min-width:180px"><input type="text" id="lista-busca" placeholder="Buscar por descrição, categoria ou forma..."></div>
-      <select id="lista-filtro" style="padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);font-size:13px;font-family:'Inter',sans-serif">
+      <select id="lista-filtro" class="sel-filtro">
         <option value="pendentes">Em aberto</option>
         <option value="pagos">${tipo==='pagar'?'Pagos':'Recebidos'}</option>
         <option value="todos">Todos</option>
       </select>
+    </div>
+    <div class="flex gap8 items-center" style="margin-bottom:16px;flex-wrap:wrap">
+      <select id="lista-cat" class="sel-filtro"><option value="">Todas as categorias</option>
+        ${(tipo==='pagar'?CAT_PAG:CAT_REC).map(c=>`<option>${esc(c)}</option>`).join('')}</select>
+      <select id="lista-conta" class="sel-filtro"><option value="">Todas as contas</option>
+        ${CONTAS.map(c=>`<option>${esc(c)}</option>`).join('')}</select>
+      <input type="month" id="lista-mes" class="sel-filtro" title="Mês do vencimento">
+      <button class="btn btn-s btn-sm" id="lista-limpar">Limpar filtros</button>
     </div>
     <div class="card" style="padding:0" id="lista-corpo"></div>`;
 
@@ -1548,32 +1621,52 @@ function renderLista(tipo){
   $('btn-novo-lanc').addEventListener('click',()=>abrirLancamento(tipo));
   // Só o corpo é redesenhado na busca — redesenhar tudo faria o input perder o foco
   $('lista-busca').addEventListener('input',()=>desenharCorpoLista(tipo));
-  $('lista-filtro').addEventListener('change',()=>{filtroLista=$('lista-filtro').value;desenharCorpoLista(tipo);});
+  ['lista-filtro','lista-cat','lista-conta','lista-mes'].forEach(id=>
+    $(id).addEventListener('change',()=>{filtroLista=$('lista-filtro').value;desenharCorpoLista(tipo);}));
+  $('lista-limpar').addEventListener('click',()=>{
+    $('lista-busca').value='';$('lista-cat').value='';$('lista-conta').value='';$('lista-mes').value='';
+    $('lista-filtro').value='todos';filtroLista='todos';desenharCorpoLista(tipo);
+  });
   desenharCorpoLista(tipo);
 }
 
 function desenharCorpoLista(tipo){
   const busca=($('lista-busca')?.value)||'';
   const filtro=($('lista-filtro')?.value)||'pendentes';
+  const cat=($('lista-cat')?.value)||'';
+  const conta=($('lista-conta')?.value)||'';
+  const mes=($('lista-mes')?.value)||'';
   const hoje=hojeISO();
   let lista=getLanc().filter(l=>l.tipo===tipo);
   if(filtro==='pendentes')lista=lista.filter(l=>!l.pago);
   else if(filtro==='pagos')lista=lista.filter(l=>l.pago);
+  if(cat)lista=lista.filter(l=>(l.categoria||'')===cat);
+  if(conta)lista=lista.filter(l=>(l.conta||'Sicredi')===conta);
+  if(mes)lista=lista.filter(l=>(l.vencimento||'').startsWith(mes));
   lista=lista.filter(l=>buscaCasa(busca,l.descricao,l.categoria,l.forma));
-  lista.sort((a,b)=>(a.vencimento||'').localeCompare(b.vencimento||''));
+  lista.sort((a,b)=>(b.vencimento||'').localeCompare(a.vencimento||''));
 
-  const totalAberto=getLanc().filter(l=>l.tipo===tipo&&!l.pago).reduce((s,l)=>s+l.valor,0);
+  const totalFiltrado=lista.reduce((s,l)=>s+(l.valor||0),0);
+  const emAberto=lista.filter(l=>!l.pago).reduce((s,l)=>s+(l.valor||0),0);
   const resumo=$('lista-resumo');
-  if(resumo)resumo.textContent=`${fBRL(totalAberto)} em aberto · ${lista.length} lançamento(s) na lista`;
+  if(resumo)resumo.textContent=
+    `${lista.length} lançamento(s) · ${fBRL(totalFiltrado)} no filtro`+
+    (emAberto?` · ${fBRL(emAberto)} em aberto`:'');
 
   const corpo=$('lista-corpo');
-  if(!lista.length){corpo.innerHTML='<div class="vazio" style="padding:40px">Nada por aqui.</div>';return;}
+  if(!lista.length){corpo.innerHTML='<div class="vazio" style="padding:40px">Nada com esses filtros.</div>';return;}
 
-  corpo.innerHTML=`<div class="twrap"><table>
+  // Com milhares de lançamentos, desenhar todos trava a tela. Os totais acima
+  // continuam somando a lista inteira.
+  const MAX=300;
+  const mostrando=lista.slice(0,MAX);
+  corpo.innerHTML=`${lista.length>MAX?`<div class="text-sm text-muted" style="padding:10px 14px">
+      Mostrando ${MAX} de ${lista.length} — use os filtros pra fechar o cerco. Os totais acima consideram todos.</div>`:''}
+    <div class="twrap"><table>
     <thead><tr>
       <th>Descrição</th><th>Categoria</th><th>Forma</th><th>Vencimento</th><th>Situação</th><th style="text-align:right">Valor</th><th></th>
     </tr></thead>
-    <tbody>${lista.map(l=>{
+    <tbody>${mostrando.map(l=>{
       const atrasado=!l.pago&&l.vencimento&&l.vencimento<hoje;
       const sit=l.pago
         ?`<span class="bdg bv">${tipo==='pagar'?'Pago':'Recebido'}</span>`
