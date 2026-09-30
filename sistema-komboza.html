@@ -2349,6 +2349,52 @@ function reconciliarImportacoesDesfeitas(){
   setTimeout(()=>toast(`${voltaram.length} lançamento(s) duplicados de uma importação desfeita foram removidos.`),1500);
 }
 
+// Cachê de show vira conta a pagar no dia que o show é marcado — serve pra
+// Previsão saber o que está comprometido. Quando o pagamento de verdade chega
+// pela importação, os dois ficavam na tela: o real pago, e o previsto parado
+// como se nunca tivesse sido pago. Aqui um encosta no outro: se o valor bate e
+// a data está perto, o previsto sai e o lançamento importado assume o show.
+const JANELA_CACHE={antes:15,depois:45};   // dias em volta da data do show
+function conciliarCachesDeShow(idsNovos){
+  const novosSet=new Set(idsNovos||[]);
+  const lancs=getLanc();
+  const previstos=lancs.filter(l=>l.origem==='show'&&l.tipo==='pagar'&&!l.pago&&l.showId);
+  if(!previstos.length)return 0;
+  const shows=getShows();
+  const usados=new Set(),remover=[];
+  let ligados=0;
+
+  lancs.filter(l=>novosSet.has(l.id)&&l.tipo==='pagar').forEach(imp=>{
+    const dataImp=imp.dataPagamento||imp.vencimento||'';
+    if(!dataImp)return;
+    const candidatos=previstos.filter(p=>{
+      if(usados.has(p.id))return false;
+      if(Math.abs((p.valor||0)-(imp.valor||0))>=0.01)return false;
+      const d=p.vencimento||'';
+      return d&&dataImp>=somaDias(d,-JANELA_CACHE.antes)&&dataImp<=somaDias(d,JANELA_CACHE.depois);
+    });
+    if(!candidatos.length)return;
+    // mais perto da data do show ganha
+    candidatos.sort((a,b)=>Math.abs(Date.parse(dataImp)-Date.parse(a.vencimento))-Math.abs(Date.parse(dataImp)-Date.parse(b.vencimento)));
+    const prev=candidatos[0];
+    usados.add(prev.id);remover.push(prev.id);
+    imp.showId=prev.showId;
+    imp.obs=[imp.obs,'Cachê do show'].filter(Boolean).join(' · ');
+    imp.atualizadoEm=agora();
+    const s=shows.find(x=>x.id===prev.showId);
+    if(s){s.lancamentoId=imp.id;s.atualizadoEm=agora();}
+    ligados++;
+  });
+
+  if(!ligados)return 0;
+  const fora=new Set(remover);
+  marcarRemovidos(remover);
+  setLanc(lancs.filter(l=>!fora.has(l.id)));
+  setShows(shows);
+  addHist('Vinculou cachê de show ao pagamento',`${ligados} show(s)`);
+  return ligados;
+}
+
 function aplicarListaOficialUmaVez(){
   const m=ls.g('migracoes',{});
   if(m.listaOficialV1)return;
@@ -3286,8 +3332,12 @@ function mostrarPreviaImport(texto,nomeArquivo){
     registrarImportacao({arquivo:nomeArquivo||'planilha.csv',linhas:totLinhas,
       criados:idsGerados.length,ignorados:dups.length,lancIds:idsGerados,
       totalReceber:totRec,totalPagar:totPag,totalTransferencia:totTransf});
+    // Pagamento de cachê que chegou agora encosta no show que estava previsto
+    const ligados=conciliarCachesDeShow(idsGerados);
     addHist('Importou planilha',`${novas.length} linha(s) → ${idsGerados.length} lançamento(s), ${dups.length} ignorado(s)`);
-    toast(`${idsGerados.length} lançamento(s) importados.${dups.length?` ${dups.length} ignorado(s) por já existir.`:''}`);
+    toast(`${idsGerados.length} lançamento(s) importados.`+
+      (dups.length?` ${dups.length} ignorado(s) por já existir.`:'')+
+      (ligados?` ${ligados} cachê(s) de show vinculado(s).`:''));
     navTo('painel');
   });
 }
@@ -4391,8 +4441,19 @@ function renderShows(){
       <td class="num">${esc(fmtData(s.data))}${s.hora?`<div class="text-sm text-muted">${esc(s.hora)}</div>`:''}</td>
       <td><strong>${esc(s.banda)}</strong>${s.obs?`<div class="text-sm text-muted">${esc(s.obs)}</div>`:''}</td>
       <td class="num fw6 valor-pag" style="text-align:right">${s.cache>0?esc(fBRL(s.cache)):'—'}</td>
-      <td>${s.cache>0?(lanc?(lanc.pago?'<span class="bdg bv">Cachê pago</span>':'<span class="bdg bam">Cachê em aberto</span>'):'<span class="bdg bcz">Sem lançamento</span>'):'<span class="bdg bcz">Sem cachê</span>'}</td>
+      <td>${s.cache>0
+        ?(lanc
+          ?(lanc.pago
+            ?`<span class="bdg bv">Cachê pago</span>${lanc.origem&&lanc.origem!=='show'?`<div class="text-sm text-muted">vinculado ao extrato</div>`:''}`
+            :(s.data<hoje
+              // Show já passou e o pagamento nunca apareceu na importação: ou o
+              // valor saiu diferente do combinado, ou foi pago fora do banco.
+              ?'<span class="bdg bvm">Previsto — pagamento não encontrado</span>'
+              :'<span class="bdg bam">Cachê previsto</span>'))
+          :'<span class="bdg bcz">Sem lançamento</span>')
+        :'<span class="bdg bcz">Sem cachê</span>'}</td>
       <td style="white-space:nowrap;text-align:right">
+        ${lanc&&!lanc.pago&&s.data<hoje?`<button class="btn btn-sm btn-s" data-baixashow="${esc(s.id)}" title="Já paguei — tirar a previsão">✓</button>`:''}
         <button class="btn btn-sm btn-s" data-edshow="${esc(s.id)}">✎</button>
         <button class="btn btn-sm btn-d" data-exshow="${esc(s.id)}">✕</button>
       </td>
@@ -4422,6 +4483,23 @@ function renderShows(){
   $('btn-novo-show').addEventListener('click',()=>abrirShow(null));
   $('main').querySelectorAll('[data-edshow]').forEach(b=>b.addEventListener('click',()=>abrirShow(b.dataset.edshow)));
   $('main').querySelectorAll('[data-exshow]').forEach(b=>b.addEventListener('click',()=>excluirShow(b.dataset.exshow)));
+  // "Já paguei": tira a previsão que ficou sobrando, sem mexer no pagamento
+  // real que veio do extrato. O show continua na agenda, só sem conta a pagar.
+  $('main').querySelectorAll('[data-baixashow]').forEach(b=>b.addEventListener('click',()=>{
+    const shows=getShows(),s=shows.find(x=>x.id===b.dataset.baixashow);
+    if(!s)return;
+    const lanc=getLanc().find(l=>l.id===s.lancamentoId);
+    if(!lanc)return;
+    if(!confirm(`Tirar a conta a pagar de ${fBRL(lanc.valor)} do show "${s.banda}"?\n\n`+
+      `Use quando o pagamento já entrou pelo extrato com outro valor, ou foi pago por fora.\n`+
+      `O show continua na agenda.`))return;
+    marcarRemovidos([lanc.id]);
+    setLanc(getLanc().filter(l=>l.id!==lanc.id));
+    s.lancamentoId=null;s.atualizadoEm=agora();setShows(shows);
+    addHist('Tirou a previsão de cachê',`${s.banda} — ${fBRL(lanc.valor)}`);
+    toast('Previsão removida. O show continua na agenda.');
+    renderShows();
+  }));
 }
 
 function abrirShow(id){
