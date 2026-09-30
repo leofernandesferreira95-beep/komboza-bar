@@ -398,6 +398,17 @@ tbody tr:hover td{background:rgba(243,236,224,0.025);}
   </div>
 </div>
 
+<div class="moverlay hidden" id="m-vincular">
+  <div class="modal" style="max-width:540px">
+    <div class="mhead"><h2>Vincular cachê de show</h2><button class="mclose" data-close="m-vincular">✕</button></div>
+    <div class="mbody" id="vinc-body"></div>
+    <div class="mfoot">
+      <button class="btn btn-s" id="vinc-pular">Agora não</button>
+      <button class="btn btn-p" id="vinc-acao">Vincular</button>
+    </div>
+  </div>
+</div>
+
 <div class="moverlay hidden" id="m-catsofi">
   <div class="modal" style="max-width:560px">
     <div class="mhead"><h2>Aplicar lista oficial de categorias</h2><button class="mclose" data-close="m-catsofi">✕</button></div>
@@ -2355,29 +2366,44 @@ function reconciliarImportacoesDesfeitas(){
 // como se nunca tivesse sido pago. Aqui um encosta no outro: se o valor bate e
 // a data está perto, o previsto sai e o lançamento importado assume o show.
 const JANELA_CACHE={antes:15,depois:45};   // dias em volta da data do show
-function conciliarCachesDeShow(idsNovos){
+
+// Só PROPÕE. Vincular sozinho é arriscado: dois cachês de mesmo valor na mesma
+// janela — coisa comum — fariam o pagamento encostar no show errado, calado.
+// Quem decide é o Leo, na tela de confirmação (ver abrirVinculoCache).
+function propostasDeVinculo(idsNovos){
   const novosSet=new Set(idsNovos||[]);
   const lancs=getLanc();
   const previstos=lancs.filter(l=>l.origem==='show'&&l.tipo==='pagar'&&!l.pago&&l.showId);
-  if(!previstos.length)return 0;
+  if(!previstos.length)return [];
   const shows=getShows();
-  const usados=new Set(),remover=[];
-  let ligados=0;
-
+  const props=[];
   lancs.filter(l=>novosSet.has(l.id)&&l.tipo==='pagar').forEach(imp=>{
     const dataImp=imp.dataPagamento||imp.vencimento||'';
     if(!dataImp)return;
     const candidatos=previstos.filter(p=>{
-      if(usados.has(p.id))return false;
       if(Math.abs((p.valor||0)-(imp.valor||0))>=0.01)return false;
       const d=p.vencimento||'';
       return d&&dataImp>=somaDias(d,-JANELA_CACHE.antes)&&dataImp<=somaDias(d,JANELA_CACHE.depois);
-    });
+    }).sort((a,b)=>Math.abs(Date.parse(dataImp)-Date.parse(a.vencimento))-Math.abs(Date.parse(dataImp)-Date.parse(b.vencimento)));
     if(!candidatos.length)return;
-    // mais perto da data do show ganha
-    candidatos.sort((a,b)=>Math.abs(Date.parse(dataImp)-Date.parse(a.vencimento))-Math.abs(Date.parse(dataImp)-Date.parse(b.vencimento)));
-    const prev=candidatos[0];
-    usados.add(prev.id);remover.push(prev.id);
+    props.push({impId:imp.id,dataImp,desc:imp.descricao,valor:imp.valor,
+      candidatos:candidatos.map(p=>({prevId:p.id,showId:p.showId,
+        banda:(shows.find(s=>s.id===p.showId)||{}).banda||'—',dataShow:p.vencimento}))});
+  });
+  return props;
+}
+
+// Aplica só o que foi confirmado. escolhas = [{impId, prevId}]
+function aplicarVinculosCache(escolhas){
+  if(!escolhas||!escolhas.length)return 0;
+  const lancs=getLanc(),shows=getShows();
+  const usadosPrev=new Set(),usadosImp=new Set(),remover=[];
+  let ligados=0;
+  escolhas.forEach(({impId,prevId})=>{
+    if(!prevId||usadosPrev.has(prevId)||usadosImp.has(impId))return;
+    const imp=lancs.find(l=>l.id===impId),prev=lancs.find(l=>l.id===prevId);
+    if(!imp||!prev)return;
+    usadosPrev.add(prevId);usadosImp.add(impId);remover.push(prevId);
     imp.showId=prev.showId;
     imp.obs=[imp.obs,'Cachê do show'].filter(Boolean).join(' · ');
     imp.atualizadoEm=agora();
@@ -2385,7 +2411,6 @@ function conciliarCachesDeShow(idsNovos){
     if(s){s.lancamentoId=imp.id;s.atualizadoEm=agora();}
     ligados++;
   });
-
   if(!ligados)return 0;
   const fora=new Set(remover);
   marcarRemovidos(remover);
@@ -2393,6 +2418,36 @@ function conciliarCachesDeShow(idsNovos){
   setShows(shows);
   addHist('Vinculou cachê de show ao pagamento',`${ligados} show(s)`);
   return ligados;
+}
+
+function abrirVinculoCache(props,aoFechar){
+  if(!props.length){aoFechar&&aoFechar(0);return;}
+  $('vinc-body').innerHTML=`
+    <div class="text-sm text-muted" style="margin-bottom:12px">
+      ${props.length} pagamento(s) importado(s) batem com um cachê que estava previsto na agenda.
+      Confirme cada um: o previsto sai e fica só o pagamento de verdade.
+      <strong>Confira a banda</strong> — dois cachês de mesmo valor podem se confundir.
+    </div>
+    ${props.map((p,i)=>`
+      <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+        <div><strong>${esc(fBRL(p.valor))}</strong> · ${esc(fmtData(p.dataImp))}
+          <div class="text-sm text-muted">${esc(p.desc||'(sem descrição)')}</div></div>
+        <div class="flex gap8 items-center" style="margin-top:6px;flex-wrap:wrap">
+          <span class="text-sm text-muted">vincular ao show</span>
+          <select class="sel-filtro" data-vinc="${i}">
+            ${p.candidatos.map((c,j)=>`<option value="${esc(c.prevId)}" ${j===0?'selected':''}>${esc(c.banda)} — ${esc(fmtData(c.dataShow))}</option>`).join('')}
+            <option value="">não vincular</option>
+          </select>
+        </div>
+      </div>`).join('')}`;
+  $('vinc-acao').onclick=()=>{
+    const escolhas=props.map((p,i)=>({impId:p.impId,prevId:$('vinc-body').querySelector(`[data-vinc="${i}"]`).value}));
+    const n=aplicarVinculosCache(escolhas.filter(e=>e.prevId));
+    closeM('m-vincular');
+    aoFechar&&aoFechar(n);
+  };
+  $('vinc-pular').onclick=()=>{closeM('m-vincular');aoFechar&&aoFechar(0);};
+  openM('m-vincular');
 }
 
 function aplicarListaOficialUmaVez(){
@@ -3332,12 +3387,19 @@ function mostrarPreviaImport(texto,nomeArquivo){
     registrarImportacao({arquivo:nomeArquivo||'planilha.csv',linhas:totLinhas,
       criados:idsGerados.length,ignorados:dups.length,lancIds:idsGerados,
       totalReceber:totRec,totalPagar:totPag,totalTransferencia:totTransf});
-    // Pagamento de cachê que chegou agora encosta no show que estava previsto
-    const ligados=conciliarCachesDeShow(idsGerados);
     addHist('Importou planilha',`${novas.length} linha(s) → ${idsGerados.length} lançamento(s), ${dups.length} ignorado(s)`);
-    toast(`${idsGerados.length} lançamento(s) importados.`+
-      (dups.length?` ${dups.length} ignorado(s) por já existir.`:'')+
-      (ligados?` ${ligados} cachê(s) de show vinculado(s).`:''));
+    const base=`${idsGerados.length} lançamento(s) importados.`+(dups.length?` ${dups.length} ignorado(s) por já existir.`:'');
+    // Pagamento de cachê que chegou agora pode encostar num show previsto —
+    // mas quem confirma é o Leo, um por um (ver propostasDeVinculo).
+    const props=propostasDeVinculo(idsGerados);
+    if(props.length){
+      abrirVinculoCache(props,n=>{
+        toast(base+(n?` ${n} cachê(s) de show vinculado(s).`:''));
+        navTo('painel');
+      });
+      return;
+    }
+    toast(base);
     navTo('painel');
   });
 }
