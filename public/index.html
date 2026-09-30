@@ -28,7 +28,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Anton&family=Oswald:wght@500;600;700&family=Barlow+Condensed:wght@400;500;600&display=swap" rel="stylesheet">
 <!-- DADOS ESTRUTURADOS — domínio oficial: kombozabar.com.br -->
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"BarOrPub","name":"Komboza Bar","image":"https://kombozabar.com.br/assets/logo_glow.png","url":"https://kombozabar.com.br/","telephone":"+5531998864613","priceRange":"$$","address":{"@type":"PostalAddress","streetAddress":"Rua José da Silva Fernandes, 24 - Lourdes","addressLocality":"Brumadinho","addressRegion":"MG","addressCountry":"BR"},"openingHoursSpecification":[{"@type":"OpeningHoursSpecification","dayOfWeek":["Wednesday","Thursday"],"opens":"17:00","closes":"00:00"},{"@type":"OpeningHoursSpecification","dayOfWeek":["Friday","Saturday"],"opens":"17:00","closes":"02:00"},{"@type":"OpeningHoursSpecification","dayOfWeek":"Sunday","opens":"17:00","closes":"00:00"}],"aggregateRating":{"@type":"AggregateRating","ratingValue":"5.0","reviewCount":"23"},"hasMap":"https://www.google.com/maps/search/?api=1&query=Komboza+Bar&query_place_id=ChIJAz4KcgDNpgARTkLklxyKqYs","sameAs":["https://instagram.com/komboza.bar"]}</script>
-<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Precisa reservar mesa?","acceptedAnswer":{"@type":"Answer","text":"Não é obrigatório, mas em noite de show especial vale reservar pelo WhatsApp pra garantir lugar."}},{"@type":"Question","name":"Tem estacionamento?","acceptedAnswer":{"@type":"Answer","text":"Não temos estacionamento próprio. A região da Praça Central tem vaga de rua."}},{"@type":"Question","name":"Quais formas de pagamento vocês aceitam?","acceptedAnswer":{"@type":"Answer","text":"Cartão, Pix, dinheiro e cartão CDL Brumadinho (vale-alimentação da prefeitura)."}},{"@type":"Question","name":"Pode levar criança ou pet?","acceptedAnswer":{"@type":"Answer","text":"Sim, o ambiente é aberto pra todo mundo, sem restrição formal."}},{"@type":"Question","name":"Tem música ao vivo toda semana?","acceptedAnswer":{"@type":"Answer","text":"Sim. A programação muda toda semana, confira a seção de programação da página."}},{"@type":"Question","name":"Qual o melhor dia pra ir?","acceptedAnswer":{"@type":"Answer","text":"Quarta é a Quarta Pesada, com promoção fixa. Quinta tem Komboza Ao Vivo. Sexta costuma ter show especial. Sábado e domingo o bar abre normal."}}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[{"@type":"Question","name":"Precisa reservar mesa?","acceptedAnswer":{"@type":"Answer","text":"Não é obrigatório, mas em sexta e sábado vale reservar pelo WhatsApp pra garantir lugar."}},{"@type":"Question","name":"Tem estacionamento?","acceptedAnswer":{"@type":"Answer","text":"Não temos estacionamento próprio. A região da Praça Central tem vaga de rua."}},{"@type":"Question","name":"Quais formas de pagamento vocês aceitam?","acceptedAnswer":{"@type":"Answer","text":"Cartão, Pix, dinheiro e cartão CDL Brumadinho (vale-alimentação da prefeitura)."}},{"@type":"Question","name":"Pode levar criança ou pet?","acceptedAnswer":{"@type":"Answer","text":"Sim, o ambiente é aberto pra todo mundo, sem restrição formal."}},{"@type":"Question","name":"Tem música ao vivo toda semana?","acceptedAnswer":{"@type":"Answer","text":"Sim. Sexta tem música ao vivo e sábado tem DJ, toda semana. Quem toca em cada sexta sai no Instagram @komboza.bar."}},{"@type":"Question","name":"Qual o melhor dia pra ir?","acceptedAnswer":{"@type":"Answer","text":"Quarta é a Quarta Pesada, com promoção fixa. Sexta tem música ao vivo e sábado tem DJ. Quinta e domingo o bar abre normal, das 17h."}}]}</script>
 <style>
 
 /* ===================== QUARTA PESADA + SHOW ESPECIAL ===================== */
@@ -42,114 +42,6 @@
   border-left-color:#fff;
   background:rgba(139,0,0,.15);
   box-shadow:inset 0 0 20px rgba(139,0,0,.1);
-}
-
-/* ===================== SEÇÃO SHOW ESPECIAL (reaproveitar quando houver próximo show grande) ===================== */
-.show-hero{
-  position:relative;
-  background-color:#0a0a0a;
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.07'/%3E%3C/svg%3E");
-  overflow:hidden;
-  padding:0;
-}
-.show-hero-bg{
-  position:absolute;inset:0;
-  background:radial-gradient(ellipse at 60% 50%, rgba(139,0,0,.35) 0%, transparent 70%);
-  pointer-events:none;
-}
-.show-hero-inner{
-  position:relative;z-index:1;
-  max-width:var(--page);margin:0 auto;
-  display:flex;flex-direction:column;align-items:center;
-  padding:48px 24px 0;
-  text-align:center;
-}
-.show-artist{
-  width:min(85vw,440px);
-  /* height:auto é obrigatório: o atributo height do <img> vale como estilo e,
-     sem isso, a foto estica na vertical no celular. */
-  height:auto;
-  filter:drop-shadow(-8px 0 40px rgba(139,0,0,.7));
-  opacity:0;
-  transform:translateX(40px);
-}
-.show-hero.play .show-artist{animation:artistEntrance .8s cubic-bezier(.22,1,.36,1) forwards}
-@keyframes artistEntrance{
-  to{opacity:1;transform:translateX(0)}
-}
-.show-content{padding:0 0 48px}
-.show-eyebrow{
-  font-family:'Oswald',sans-serif;text-transform:uppercase;
-  letter-spacing:3px;font-size:.75rem;color:#f5a623;font-weight:600;
-  margin-bottom:10px;
-  opacity:0;
-}
-.show-hero.play .show-eyebrow{animation:fadeUp .6s ease forwards .4s}
-.show-title{
-  font-family:'Anton',sans-serif;text-transform:uppercase;
-  font-size:clamp(2.4rem,10vw,4rem);line-height:.95;
-  color:var(--cream);margin-bottom:6px;
-  opacity:0;
-}
-.show-hero.play .show-title{animation:glitch .1s ease forwards .7s, fadeUp .5s ease forwards .6s}
-.show-title .red{color:var(--blood-hi)}
-.show-date{
-  font-family:'Anton',sans-serif;font-size:clamp(1.4rem,5vw,2rem);
-  color:#f5a623;margin:14px 0 8px;
-  opacity:0;
-}
-.show-hero.play .show-date{animation:fadeUp .5s ease forwards .85s}
-.show-details{
-  font-family:'Oswald',sans-serif;font-size:1rem;
-  color:var(--cream-dim);letter-spacing:.5px;margin-bottom:16px;
-  opacity:0;
-}
-.show-hero.play .show-details{animation:fadeUp .5s ease forwards 1s}
-.show-free{
-  display:inline-block;
-  font-family:'Anton',sans-serif;font-size:1.1rem;
-  color:var(--black);background:#f5a623;
-  padding:6px 18px;border-radius:4px;letter-spacing:1px;
-  opacity:0;
-}
-.show-hero.play .show-free{animation:fadeUp .5s ease forwards 1.1s, freePulse 2s ease-in-out 1.5s infinite}
-.show-cta-wrap{
-  margin-top:22px;max-width:360px;width:100%;
-  opacity:0;
-}
-.show-hero.play .show-cta-wrap{animation:fadeUp .5s ease forwards 1.2s}
-@keyframes fadeUp{to{opacity:1;transform:none}}
-@keyframes freePulse{
-  0%,100%{box-shadow:0 0 0 0 rgba(245,166,35,0)}
-  50%{box-shadow:0 0 16px 4px rgba(245,166,35,.4)}
-}
-@keyframes glitch{
-  0%,100%{text-shadow:none}
-  25%{text-shadow:2px 0 var(--blood-hi),-2px 0 #f5a623}
-  75%{text-shadow:-2px 0 var(--blood-hi),2px 0 #f5a623}
-}
-@keyframes titleShake{
-  0%,100%{text-shadow:none}
-  25%{transform:translateX(-2px) rotate(-.4deg);text-shadow:3px 2px 0 rgba(168,16,16,.9),0 0 30px rgba(168,16,16,.6)}
-  75%{transform:translateX(2px) rotate(.4deg);text-shadow:-3px 2px 0 rgba(168,16,16,.9),0 0 30px rgba(168,16,16,.6)}
-}
-.show-title.shake-loop{animation:titleShake .35s ease-in-out}
-
-@media(min-width:760px){
-  .show-hero-inner{
-    display:grid;
-    grid-template-columns:420px 1fr;
-    align-items:center;
-    justify-content:center;gap:48px;text-align:left;
-    padding:60px 24px 0;
-  }
-  .show-artist{width:100%;height:auto;justify-self:end}
-  .show-content{padding:48px 0 60px;max-width:500px}
-  .show-cta-wrap{margin-left:0}
-}
-
-@media(min-width:1100px){
-  .show-hero-inner{grid-template-columns:500px 1fr}
 }
 
 /* ===================== TOKENS ===================== */
@@ -353,7 +245,6 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
 @media(prefers-reduced-motion:reduce){
   *{animation:none!important;transition:none!important}
   .js .reveal,.js .hero-logo,.js .hero h1,.js .hero .sub,.js .hero-cta{opacity:1!important;transform:none!important}
-  .show-artist,.show-eyebrow,.show-title,.show-date,.show-details,.show-free,.show-cta-wrap{opacity:1!important;transform:none!important}
   html{scroll-behavior:auto}
 }
 </style>
@@ -381,72 +272,50 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
 
 
 
-<!-- ============ SHOW ESPECIAL (trocar quando o evento mudar) ============ -->
-<section class="show-hero" id="show">
-  <div class="show-hero-bg"></div>
-  <div class="show-hero-inner">
-    <picture>
-      <source srcset="assets/show_artist.webp" type="image/webp">
-      <img class="show-artist" src="assets/show_artist.png" alt="Banda Seattle's" width="900" height="616">
-    </picture>
-    <div class="show-content">
-      <p class="show-eyebrow">Show especial · Sexta</p>
-      <h2 class="show-title">Seattle<span class="red">'s</span></h2>
-      <div class="show-date">11/09 · Sexta</div>
-      <p class="show-details">Rock ao vivo · Show às 23h · Casa abre às 17h</p>
-      <span class="show-free">Entrada gratuita</span>
-      <div class="show-cta-wrap">
-        <a class="btn" href="https://wa.me/5531998864613?text=Oi%2C+vim+pelo+site+do+Komboza%2C+quero+saber+mais+sobre+o+show+do+Seattle%27s%21" target="_blank" rel="noopener" onclick="conv()">
-          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-          Falar no WhatsApp
-        </a>
-      </div>
-    </div>
-  </div>
-</section>
-
 <!-- ============ PROGRAMAÇÃO ============ -->
 <section class="section prog" id="programacao">
   <div class="wrap">
     <div class="head reveal">
-      <p class="eyebrow">Essa semana no Komboza</p>
+      <p class="eyebrow">Toda semana no Komboza</p>
       <h2 class="display">Programação</h2>
       <div class="divider"></div>
     </div>
-    <!-- TROCAR AQUI: PROGRAMACAO — atualizar toda segunda-feira -->
+    <!-- PROGRAMAÇÃO FIXA: vale toda semana, sem data. Só mexer aqui se um dia
+         da semana mudar de vez — atração específica vai pelo Instagram. -->
     <div class="prog-list reveal">
       <div class="prog-row quarta-pesada">
-        <div class="prog-day">Qua<span>09/09</span></div>
+        <div class="prog-day">Qua</div>
         <div class="prog-info">
           <div class="prog-act">⚡ Quarta Pesada</div>
           <div class="prog-sub">Torre Komboza + 2 Long Necks · <span class="promo-tag">R$49</span></div>
-          <div class="prog-badge">Só toda quarta — não perca</div>
-        </div>
-      </div>
-      <div class="prog-row highlight">
-        <div class="prog-day">Qui<span>10/09</span></div>
-        <div class="prog-info">
-          <div class="prog-act">Komboza Ao Vivo</div>
-          <div class="prog-sub"><span class="tag-free">Entrada gratuita</span> · Casa abre às 17h</div>
-        </div>
-      </div>
-      <div class="prog-row show-especial">
-        <div class="prog-day">Sex<span>11/09</span></div>
-        <div class="prog-info">
-          <div class="prog-act">🎸 Seattle's</div>
-          <div class="prog-sub">Show às 23h · <span class="tag-free">Entrada gratuita</span></div>
-          <div class="prog-badge">Rock ao vivo — não perca</div>
+          <div class="prog-badge">Toda quarta — promoção fixa</div>
         </div>
       </div>
       <div class="prog-row">
-        <div class="prog-day">Sáb<span>12/09</span></div>
+        <div class="prog-day">Qui</div>
         <div class="prog-info">
           <div class="prog-act">Bar Aberto</div>
           <div class="prog-sub">Casa abre às 17h</div>
         </div>
       </div>
+      <div class="prog-row highlight">
+        <div class="prog-day">Sex</div>
+        <div class="prog-info">
+          <div class="prog-act">🎸 Música Ao Vivo</div>
+          <div class="prog-sub"><span class="tag-free">Entrada gratuita</span> · Casa abre às 17h</div>
+          <div class="prog-badge">Toda sexta — rock ao vivo</div>
+        </div>
+      </div>
+      <div class="prog-row highlight">
+        <div class="prog-day">Sáb</div>
+        <div class="prog-info">
+          <div class="prog-act">🎧 DJ</div>
+          <div class="prog-sub"><span class="tag-free">Entrada gratuita</span> · Casa abre às 17h</div>
+          <div class="prog-badge">Todo sábado — DJ na casa</div>
+        </div>
+      </div>
       <div class="prog-row">
-        <div class="prog-day">Dom<span>13/09</span></div>
+        <div class="prog-day">Dom</div>
         <div class="prog-info">
           <div class="prog-act">Bar Aberto</div>
           <div class="prog-sub">Casa abre às 17h</div>
@@ -454,7 +323,7 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
       </div>
     </div>
 
-    <p class="prog-note">Programação pode mudar — confirme no nosso WhatsApp.</p>
+    <p class="prog-note">Quem toca em cada sexta a gente anuncia no Instagram <a href="https://instagram.com/komboza.bar" target="_blank" rel="noopener">@komboza.bar</a>. Dúvida de última hora, chama no WhatsApp.</p>
   </div>
 </section>
 
@@ -580,7 +449,7 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
     <div class="faq-list reveal">
       <details class="faq-item">
         <summary>Precisa reservar mesa?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
-        <p>Não é obrigatório, mas em noite de show especial vale reservar pelo WhatsApp pra garantir lugar.</p>
+        <p>Não é obrigatório, mas em sexta e sábado vale reservar pelo WhatsApp pra garantir lugar.</p>
       </details>
       <details class="faq-item">
         <summary>Tem estacionamento?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
@@ -596,11 +465,11 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
       </details>
       <details class="faq-item">
         <summary>Tem música ao vivo toda semana?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
-        <p>Sim. A programação muda toda semana, confira a seção de programação da página.</p>
+        <p>Sim. Sexta tem música ao vivo e sábado tem DJ, toda semana. Quem toca em cada sexta sai no Instagram @komboza.bar.</p>
       </details>
       <details class="faq-item">
         <summary>Qual o melhor dia pra ir?<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="m6 9 6 6 6-6"/></svg></summary>
-        <p>Quarta é a Quarta Pesada, com promoção fixa. Quinta tem Komboza Ao Vivo. Sexta costuma ter show especial. Sábado e domingo o bar abre normal.</p>
+        <p>Quarta é a Quarta Pesada, com promoção fixa. Sexta tem música ao vivo e sábado tem DJ. Quinta e domingo o bar abre normal, das 17h.</p>
       </details>
     </div>
   </div>
@@ -648,35 +517,6 @@ footer .copy{font-size:.75rem;color:var(--cream-dim);opacity:.5;margin-top:14px;
 document.querySelector('.hero').classList.add('loaded');
 var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target);}});},{threshold:.15});
 document.querySelectorAll('.reveal').forEach(function(el){io.observe(el)});
-
-var showHero=document.querySelector('.show-hero');
-if(showHero){
-  var showTitle=showHero.querySelector('.show-title');
-  var shakeTimer=null;
-  function triggerShake(){
-    if(!showTitle)return;
-    showTitle.classList.remove('shake-loop');
-    void showTitle.offsetWidth;
-    showTitle.classList.add('shake-loop');
-    setTimeout(function(){showTitle.classList.remove('shake-loop');},380);
-  }
-  var showIO=new IntersectionObserver(function(es){es.forEach(function(e){
-    if(e.isIntersecting){
-      showHero.classList.remove('play');
-      void showHero.offsetWidth;
-      showHero.classList.add('play');
-      clearInterval(shakeTimer);
-      shakeTimer=setTimeout(function(){
-        triggerShake();
-        shakeTimer=setInterval(triggerShake,4000);
-      },1200);
-    }else{
-      showHero.classList.remove('play');
-      clearInterval(shakeTimer);
-    }
-  });},{threshold:.2});
-  showIO.observe(showHero);
-}
 
 function conv(){if(typeof gtag==='function'){gtag('event','conversion',{'send_to':'AW-XXXXXXXX/LABEL'});}return true;}
 </script>
