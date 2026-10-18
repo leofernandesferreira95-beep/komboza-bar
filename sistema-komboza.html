@@ -3424,9 +3424,9 @@ function mostrarPreviaImport(texto,nomeArquivo){
         const desc=l.descricao||(origemConta==='CDL'?'Repasse CDL':'Depósito do caixa');
         const id1=uid('l'),id2=uid('l');
         lancs.push({id:id1,tipo:'pagar',valor:l.valor,descricao:desc,
-          categoria:CAT_TRANSFER,forma:l.forma||origemConta,conta:origemConta,...comum,bandeira:'',origem:'Manual'});
+          categoria:CAT_TRANSFER,forma:l.forma||'Transferência',conta:origemConta,...comum,bandeira:'',origem:'Manual'});
         lancs.push({id:id2,tipo:'receber',valor:l.valor,descricao:desc,
-          categoria:CAT_TRANSFER,forma:l.forma||origemConta,conta:'Sicredi',...comum,bandeira:'',origem:'Manual'});
+          categoria:CAT_TRANSFER,forma:l.forma||'Transferência',conta:'Sicredi',...comum,bandeira:'',origem:'Manual'});
         idsGerados.push(id1,id2);
         return;
       }
