@@ -1258,6 +1258,7 @@ auth.onAuthStateChanged(async user=>{
     migrarLancamentos();
     garantirCategorias();
     aplicarListaOficialUmaVez();
+    normalizarFormasUmaVez();
     reconciliarImportacoesDesfeitas();
     removerEstimativaDinheiro();
     fsStartSync();
@@ -1376,10 +1377,13 @@ function renderPainel(){
   // Recebido por forma de pagamento — o corte que fecha o caixa
   const porForma={};
   FORMAS_REC.forEach(f=>porForma[f]=0);
+  // Forma fora das conhecidas aparece com o próprio nome (ou 'Sem forma'). Antes
+  // era somada em Dinheiro — um crédito mal grafado virava dinheiro no painel.
   lancs.filter(l=>l.tipo==='receber'&&pagosNoMes(l)).forEach(l=>{
-    const f=l.forma&&porForma[l.forma]!==undefined?l.forma:'Dinheiro';
+    const f=l.forma||'Sem forma';
     porForma[f]=(porForma[f]||0)+l.valor;
   });
+  const formasPainel=Object.keys(porForma).filter(f=>FORMAS_REC.includes(f)||porForma[f]!==0);
   const maxForma=Math.max(...Object.values(porForma),1);
 
   // Últimos 6 meses
@@ -1437,7 +1441,7 @@ function renderPainel(){
         <select id="pf-cat" class="sel-filtro"><option value="">Todas as categorias</option>
           ${[...new Set([...CAT_REC,...CAT_PAG,...CATS_NEUTRAS])].map(c=>`<option ${fp.cat===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
         <select id="pf-forma" class="sel-filtro"><option value="">Todas as formas</option>
-          ${[...new Set([...FORMAS_REC,...FORMAS_PAGTO])].map(f=>`<option ${fp.forma===f?'selected':''}>${esc(f)}</option>`).join('')}</select>
+          ${[...new Set([...FORMAS_REC,...FORMAS_PAGTO,...getLanc().map(l=>l.forma).filter(Boolean)])].map(f=>`<option ${fp.forma===f?'selected':''}>${esc(f)}</option>`).join('')}</select>
         <select id="pf-conta" class="sel-filtro"><option value="">Todas as contas</option>
           ${CONTAS.map(c=>`<option ${fp.conta===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
         <select id="pf-origem" class="sel-filtro"><option value="">Toda origem</option>
@@ -1513,7 +1517,7 @@ function renderPainel(){
     <div class="mgr">
       <div class="card">
         <div class="ctitle">Recebido por forma de pagamento</div>
-        ${entrou>0?FORMAS_REC.map(f=>{
+        ${entrou>0?formasPainel.map(f=>{
           const val=porForma[f]||0;
           const pct=entrou>0?Math.round(val/entrou*100):0;
           return `<div class="fp-row">
@@ -1521,7 +1525,7 @@ function renderPainel(){
               <span class="fp-nome">${esc(f)}</span>
               <span><span class="fp-val">${esc(fBRL(val))}</span><span class="fp-pct">${pct}%</span></span>
             </div>
-            <div class="fp-track"><div class="fp-fill" style="width:${val/maxForma*100}%;background:${CORES_FORMA[f]}"></div></div>
+            <div class="fp-track"><div class="fp-fill" style="width:${val/maxForma*100}%;background:${CORES_FORMA[f]||'#888'}"></div></div>
           </div>`;
         }).join(''):'<div class="vazio">Nada recebido neste mês ainda.<br>Importe o extrato da Stone.</div>'}
       </div>
@@ -2450,6 +2454,29 @@ function abrirVinculoCache(props,aoFechar){
   openM('m-vincular');
 }
 
+// Corrige a grafia da Forma nos lançamentos já gravados ("Credito" → "Cartão de
+// crédito"). Só reescreve o texto da Forma — valor, data, categoria, conta e
+// tudo mais ficam como estão. O que não for reconhecido NÃO é mexido.
+function normalizarFormasUmaVez(){
+  const mg=ls.g('migracoes',{});
+  if(mg.formasV1)return;
+  const lancs=getLanc();let n=0;const nao={};
+  lancs.forEach(l=>{
+    const atual=l.forma||'';
+    if(!atual||FORMAS_CANON.includes(atual))return;
+    const c=formaCanonica(atual);
+    if(c&&c!==atual){l.forma=c;l.atualizadoEm=agora();n++;}
+    else if(c===null)nao[atual]=(nao[atual]||0)+1;
+  });
+  if(n){
+    setLanc(lancs);
+    addHist('Normalizou a Forma dos lançamentos',n+' lançamento(s)');
+    console.info('[KOMBOZA] Forma normalizada em',n,'lançamento(s). Não reconhecidas:',nao);
+    setTimeout(()=>toast(n+' lançamento(s) tiveram a Forma corrigida (ex.: Credito → Cartão de crédito).'),1800);
+  }
+  ls.s('migracoes',{...ls.g('migracoes',{}),formasV1:true});
+}
+
 function aplicarListaOficialUmaVez(){
   const m=ls.g('migracoes',{});
   if(m.listaOficialV1)return;
@@ -2780,6 +2807,26 @@ const ALIAS_COL={
 // Leo) quanto "Cartão de crédito"/"Cartão de débito" (como já existe no
 // formulário manual do sistema). "cartaoalimentacao" vem antes de
 // "cartao...credito/debito" pra não confundir Cartão Alimentação com cartão comum.
+// Forma sempre grafada igual no banco. Antes o texto do arquivo ia cru: "Credito"
+// (sem acento) não é "Cartão de crédito", e o painel — que só conhecia as 5
+// formas do cadastro — jogava tudo que não reconhecia em Dinheiro. Um crédito
+// da Stone aparecia como dinheiro sem nenhum erro. Agora o texto é reconhecido
+// por sentido (ignora acento, caixa e "Cartão de"), gravado no nome oficial, e
+// o que não for reconhecido é ERRO na importação — nunca vira Dinheiro calado.
+const FORMAS_CANON=['Dinheiro','PIX','Cartão de débito','Cartão de crédito','Cartão CDL Brumadinho','Boleto','Transferência'];
+function formaCanonica(txt){
+  const f=chaveCol(txt||'');
+  if(!f)return '';
+  if(f.includes('alimentacao')||f.includes('cdl'))return 'Cartão CDL Brumadinho';
+  if(f.includes('credito')||f.includes('voucher'))return 'Cartão de crédito';
+  if(f.includes('debito'))return 'Cartão de débito';
+  if(f.includes('pix'))return 'PIX';
+  if(f.includes('dinheiro')||f.includes('especie'))return 'Dinheiro';
+  if(f.includes('boleto'))return 'Boleto';
+  if(f.includes('transfer'))return 'Transferência';
+  return null;
+}
+
 function derivarOrigem(tipo,forma){
   if(tipo!=='receber')return 'Manual';
   if(ehFormaCDL(forma))return 'CDL';
@@ -2938,8 +2985,15 @@ function analisarPlanilha(textoOriginal){
       if(achou)conta=achou; else avisos.push(`conta desconhecida — usando ${conta}`);
     }
 
+    // Forma: reconhecida e gravada no nome oficial. Texto que não é nenhuma das
+    // formas conhecidas trava a importação — antes virava Dinheiro no painel.
+    const formaDig=String(bruto.forma||'').trim();
+    const forma=formaCanonica(formaDig);
+    if(formaDig&&forma===null)erros.push('forma "'+formaDig+'" não reconhecida');
+    else if(!formaDig&&tipo!=='transferencia')avisos.push('sem forma');
+
     // Origem NÃO se digita — deriva de Tipo+Forma (ver derivarOrigem acima).
-    const origem=tipo==='transferencia'?'Manual':derivarOrigem(tipo,bruto.forma);
+    const origem=tipo==='transferencia'?'Manual':derivarOrigem(tipo,forma||'');
 
     const descricao=bruto.descricao||'(sem descrição)';
     if(!bruto.descricao)avisos.push('sem descrição');
@@ -2967,7 +3021,7 @@ function analisarPlanilha(textoOriginal){
 
     const dataVenda=(dataCal&&hm)?`${dataCal}T${String(hm.hora).padStart(2,'0')}:${String(hm.min).padStart(2,'0')}`:null;
     return{n:n+2,venc,dataVenda,conta,tipo,descricao,valor,valorLiquido,categoria,chave,
-      forma:bruto.forma||'',bandeira:bruto.bandeira||'',origem,qtd:isNaN(qtd)||qtd<1?1:qtd,
+      forma:forma||'',bandeira:bruto.bandeira||'',origem,qtd:isNaN(qtd)||qtd<1?1:qtd,
       pago,erros,avisos,dup};
   }),resumo};
 }
