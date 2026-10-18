@@ -984,6 +984,9 @@ function desfazerImportacao(id){
   const idsRemover=new Set(imp.lancIds||[]);
   marcarRemovidos([...idsRemover]);   // sem isto a nuvem devolve tudo na próxima mesclagem
   const lancs=getLanc().filter(l=>!idsRemover.has(l.id));
+  // baixas dadas por esta importação voltam a ficar em aberto
+  const idsBaixa=new Set(imp.baixaIds||[]);
+  lancs.forEach(l=>{if(idsBaixa.has(l.id)){l.pago=false;l.dataPagamento=null;l.atualizadoEm=agora();}});
   setLanc(lancs);
   imp.desfeitaEm=agora();
   setImportacoes(imps);
@@ -1060,7 +1063,10 @@ const CATS_FIXAS=[CAT_TAXA,CAT_FATURAMENTO,CAT_TRANSFER,CAT_PESSOAL];
 // que passou pelo CNPJ sem ser operação do bar. Ficam fora de Entrou/Saiu,
 // faturamento por mês, gasto por categoria e previsão — mas continuam contando
 // no saldo por conta, porque lá o que importa é onde o dinheiro está.
-const CATS_NEUTRAS=[CAT_TRANSFER,CAT_PESSOAL];
+// Aporte de sócio é capital que entrou, não venda: somar em "Entrou" inflava o
+// resultado do mês. Fica fora de Entrou/Saiu/previsão e dentro do saldo por conta.
+const CAT_APORTE_LEO='Aporte Sócio (Leo)', CAT_APORTE_JANE='Aporte Sócio (Jane)';
+const CATS_NEUTRAS=[CAT_TRANSFER,CAT_PESSOAL,CAT_APORTE_LEO,CAT_APORTE_JANE];
 const noResultado=l=>!CATS_NEUTRAS.includes(l.categoria||'');
 
 // ═══════════ LISTA OFICIAL DE CATEGORIAS ═══════════
@@ -1068,13 +1074,13 @@ const noResultado=l=>!CATS_NEUTRAS.includes(l.categoria||'');
 // a lista que o Leo mandou em 13/09/2026. É o que a ação "Aplicar lista
 // oficial" (tela Categorias) usa pra acertar o cadastro de uma vez.
 const CATS_OFICIAIS={
-  rec:['Faturamento com Vendas de Produtos','Aporte Sócio (Leo)'],
+  rec:['Faturamento com Vendas de Produtos','Aporte Sócio (Leo)','Aporte Sócio (Jane)'],
   var:['Custo dos Produtos','Prolabore (Leo)','Prolabore (Jane)','Prolabore (Wanderley)',
     'Salário (Maria)','Freelance','Atração','Manutenção Equipamentos','Gasolina',
     'Marketing','Descartáveis'],
   fix:['Aluguel','Água','Luz (bar)','Luz (casa)','Internet','Investimentos',
     'Juros bancários','CDL Brumadinho','FGTS','Simples Nacional','Contabilidade',
-    'Sistema Connectplug','Locação de Equipamento']
+    'Sistema Connectplug','Locação de Equipamento','Assinaturas']
 };
 // Mesmo conceito, nome diferente: renomear leva os lançamentos junto, em vez de
 // criar a nova e deixar a antiga com os valores presos.
@@ -1258,6 +1264,7 @@ auth.onAuthStateChanged(async user=>{
     migrarLancamentos();
     garantirCategorias();
     aplicarListaOficialUmaVez();
+    garantirCategoriasNovasUmaVez();
     normalizarFormasUmaVez();
     reconciliarImportacoesDesfeitas();
     removerEstimativaDinheiro();
@@ -1679,7 +1686,7 @@ function desenharCorpoLista(tipo){
       Mostrando ${MAX} de ${lista.length} — use os filtros pra fechar o cerco. Os totais acima consideram todos.</div>`:''}
     <div class="twrap"><table>
     <thead><tr>
-      <th>Descrição</th><th>Categoria</th><th>Forma</th><th>Vencimento</th><th>Situação</th><th style="text-align:right">Valor</th><th></th>
+      <th>Descrição</th><th>Categoria</th><th>Forma</th><th>Conta</th><th>Vencimento</th><th>Situação</th><th style="text-align:right">Valor</th><th></th>
     </tr></thead>
     <tbody>${mostrando.map(l=>{
       const atrasado=!l.pago&&l.vencimento&&l.vencimento<hoje;
@@ -1693,6 +1700,7 @@ function desenharCorpoLista(tipo){
         </td>
         <td>${esc(l.categoria)||'—'}</td>
         <td>${esc(l.forma)||'—'}</td>
+        <td>${esc(l.conta||'Sicredi')}</td>
         <td class="num">${esc(fmtData(l.vencimento))}</td>
         <td>${sit}</td>
         <td class="fw6 num ${l.tipo==='receber'?'valor-rec':'valor-pag'}" style="text-align:right">${esc(fBRL(l.valor))}</td>
@@ -1713,6 +1721,19 @@ function desenharCorpoLista(tipo){
 // ═══════════════════════════════════════════════
 // LANÇAMENTO
 // ═══════════════════════════════════════════════
+// Opções de Forma que NUNCA trocam o valor gravado. Antes a lista só marcava a
+// opção quando o texto gravado batia com ela; um valor fora da lista (ou vazio)
+// deixava o <select> no primeiro item — Dinheiro — e salvar a edição ou a baixa
+// sobrescrevia a Forma de verdade. Agora o valor atual sempre vira uma opção.
+function opcoesForma(tipo,atual){
+  const base=tipo==='receber'?FORMAS_REC:FORMAS_PAGTO;
+  const lista=[...base];
+  let vazia='';
+  if(atual&&!lista.includes(atual))lista.unshift(atual);
+  else if(atual===''||atual==null)vazia='<option value="" selected>— sem forma —</option>';
+  return vazia+lista.map(f=>`<option ${atual===f?'selected':''}>${esc(f)}</option>`).join('');
+}
+
 function abrirLancamento(tipoSel,editarId){
   const ed=editarId?getLanc().find(l=>l.id===editarId):null;
   const tipo=ed?ed.tipo:(tipoSel||'pagar');
@@ -1742,6 +1763,13 @@ function abrirLancamento(tipoSel,editarId){
       </div>
     </div>
     <div class="frow c2">
+      <div class="fgroup"><label>Conta</label>
+        <select id="lanc-conta">${CONTAS.map(c=>`<option ${((ed&&ed.conta)||'Sicredi')===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+      </div>
+      ${ed&&ed.dataVenda?`<div class="fgroup"><label>Hora da venda</label>
+        <input type="text" value="${esc(ed.dataVenda.slice(11,16))}" disabled title="Mexer na hora muda o dia operacional; para mudar o dia, edite o Vencimento"></div>`:'<div></div>'}
+    </div>
+    <div class="frow c2">
       <div class="fgroup"><label>Vencimento *</label>
         <input type="date" id="lanc-venc" value="${ed?esc(ed.vencimento):hojeISO()}">
       </div>
@@ -1763,10 +1791,17 @@ function abrirLancamento(tipoSel,editarId){
     const cats=t==='receber'?CAT_REC:CAT_PAG;
     const formas=t==='receber'?FORMAS_REC:FORMAS_PAGTO;
     $('lanc-cat').innerHTML='<option value="">— Selecione —</option>'+cats.map(c=>`<option ${ed&&ed.categoria===c?'selected':''}>${esc(c)}</option>`).join('');
-    $('lanc-forma').innerHTML=formas.map(f=>`<option ${ed&&ed.forma===f?'selected':''}>${esc(f)}</option>`).join('');
+    $('lanc-forma').innerHTML=opcoesForma(t,ed?(ed.forma||''):null);
   };
   atualizarOpcoes();
   $('lanc-tipo').addEventListener('change',atualizarOpcoes);
+  // Lançamento novo: Dinheiro e Cartão CDL puxam a conta certa (dá pra trocar)
+  if(!ed)$('lanc-forma').addEventListener('change',()=>{
+    const f=$('lanc-forma').value;
+    if(f==='Dinheiro')$('lanc-conta').value='Dinheiro';
+    else if(f==='Cartão CDL Brumadinho')$('lanc-conta').value='CDL';
+    else if(f&&$('lanc-conta').value!=='Sicredi')$('lanc-conta').value='Sicredi';
+  });
   openM('m-lanc');
   setTimeout(()=>$('lanc-valor').focus(),50);
 }
@@ -1791,7 +1826,13 @@ $('btn-salvar-lanc').addEventListener('click',()=>{
     const l=lancs.find(x=>x.id===id);
     if(!l){toast('Lançamento não encontrado.',true);return;}
     if(mesFechado((l.vencimento||'').slice(0,7))){toast(`${fmtMesAno(l.vencimento.slice(0,7))} está fechado.`,true);return;}
-    Object.assign(l,{valor,descricao:desc,categoria:cat,forma,vencimento:venc,obs,atualizadoEm:agora()});
+    // Antes só o 'valor' mudava: valorBruto e valorLiquido ficavam com o número
+    // velho, e análises/exportação liam um valor diferente do painel.
+    const velhoBruto=l.valorBruto??l.valor, velhoLiq=l.valorLiquido??l.valor;
+    Object.assign(l,{valor,valorBruto:valor,
+      valorLiquido:Math.abs(velhoLiq-velhoBruto)<0.005?valor:velhoLiq,
+      descricao:desc,categoria:cat,forma,conta:$('lanc-conta').value||l.conta||'Sicredi',
+      vencimento:venc,obs,atualizadoEm:agora()});
     setLanc(lancs);
     addHist('Editou lançamento: '+desc,fBRL(valor));
     toast('Lançamento atualizado.');
@@ -1801,15 +1842,19 @@ $('btn-salvar-lanc').addEventListener('click',()=>{
     const grupoId=parcelas>1?uid('g'):null;
     for(let i=0;i<parcelas;i++){
       const d=new Date(venc+'T12:00:00');d.setMonth(d.getMonth()+i);
+      const vencI=d.toISOString().slice(0,10);
       lancs.push({
-        id:uid('l'),tipo,valor,descricao:desc,categoria:cat,forma,
-        vencimento:d.toISOString().slice(0,10),
+        id:uid('l'),tipo,valor,valorBruto:valor,valorLiquido:valor,qtdTransacoes:1,
+        conta:$('lanc-conta').value||'Sicredi',bandeira:'',dataVenda:null,
+        diaOperacional:vencI,dataRecebimento:(pago&&i===0)?venc:null,foraDaAnalise:false,
+        descricao:desc,categoria:cat,forma,
+        vencimento:vencI,
         totalParcelas:parcelas,parcelaAtual:i+1,grupoId,
         pago:pago&&i===0,dataPagamento:(pago&&i===0)?venc:null,
         // cliente fica vazio: o bar não mantém cadastro de cliente, o
         // lançamento é só venda ou custo. O campo continua no registro para
         // não quebrar dados antigos caso volte a ser usado.
-        cliente:'',showId:null,obs,origem:'manual',
+        cliente:'',showId:null,obs,origem:'Manual',
         criadoEm:agora(),atualizadoEm:agora()
       });
     }
@@ -1866,7 +1911,7 @@ function abrirBaixa(id){
       <div class="fgroup"><label>Valor (R$)</label><input type="number" id="bx-valor" step="0.01" min="0" value="${esc(l.valor)}"></div>
     </div>
     <div class="fgroup"><label>${receber?'Recebido em':'Pago com'}</label>
-      <select id="bx-forma">${formas.map(f=>`<option ${l.forma===f?'selected':''}>${esc(f)}</option>`).join('')}</select>
+      <select id="bx-forma">${opcoesForma(l.tipo,l.forma||'')}</select>
     </div>
     <div class="text-sm text-muted" style="margin-top:10px">A forma escolhida aqui é a que aparece na separação do painel.</div>`;
 
@@ -2110,7 +2155,7 @@ function renderCategorias(){
           const neutra=CATS_NEUTRAS.includes(nome);
           const fixa=CATS_PROTEGIDAS.includes(nome);
           return `<div class="flex gap8 items-center" style="margin-bottom:7px">
-            <input type="text" value="${esc(nome)}" data-cat="${chave}" data-i="${i}" ${fixa?'readonly title="Categoria do sistema" style="flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text-2);font-size:13px;font-family:\'Inter\',sans-serif;outline:none;cursor:not-allowed"':'style="flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:\'Inter\',sans-serif;outline:none"'}>
+            <input type="text" value="${esc(nome)}" data-cat="${chave}" data-i="${i}" ${(fixa||neutra)?'readonly title="Categoria do sistema (neutra) — o nome não pode mudar" style="flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;background:var(--surface2);color:var(--text-2);font-size:13px;font-family:\'Inter\',sans-serif;outline:none;cursor:not-allowed"':'style="flex:1;padding:8px 11px;border:1.5px solid var(--border);border-radius:7px;background:var(--bg-alt);color:var(--text);font-size:13px;font-family:\'Inter\',sans-serif;outline:none"'}>
             <span class="text-sm" style="color:var(--text-3);min-width:74px;text-align:right">${n?n+' lançam.':'sem uso'}</span>
             ${neutra
               ? '<span class="bdg bcz" title="Não conta como receita nem despesa">neutra</span>'
@@ -2381,7 +2426,7 @@ function propostasDeVinculo(idsNovos){
   if(!previstos.length)return [];
   const shows=getShows();
   const props=[];
-  lancs.filter(l=>novosSet.has(l.id)&&l.tipo==='pagar').forEach(imp=>{
+  lancs.filter(l=>novosSet.has(l.id)&&l.tipo==='pagar'&&!l.taxaAuto).forEach(imp=>{
     const dataImp=imp.dataPagamento||imp.vencimento||'';
     if(!dataImp)return;
     const candidatos=previstos.filter(p=>{
@@ -2475,6 +2520,21 @@ function normalizarFormasUmaVez(){
     setTimeout(()=>toast(n+' lançamento(s) tiveram a Forma corrigida (ex.: Credito → Cartão de crédito).'),1800);
   }
   ls.s('migracoes',{...ls.g('migracoes',{}),formasV1:true});
+}
+
+// Categorias novas que o fechamento de setembro precisa. Só ACRESCENTA, nunca
+// mexe no que já existe. "Assinaturas" entra em Saídas fixas (Spotify e Sky são
+// mensais); o bloco só muda pela lista oficial se o Leo preferir outro.
+function garantirCategoriasNovasUmaVez(){
+  const mg=ls.g('migracoes',{});
+  if(mg.catsOutV1)return;
+  const c=getCats();let mudou=false;
+  const existe=n=>['rec','var','fix'].some(g=>(c[g]||[]).some(x=>chaveCol(x)===chaveCol(n)));
+  if(!existe('Assinaturas')){c.fix=[...(c.fix||[]),'Assinaturas'];mudou=true;}
+  if(!existe(CAT_APORTE_JANE)){c.rec=[...(c.rec||[]),CAT_APORTE_JANE];mudou=true;}
+  if(!existe(CAT_APORTE_LEO)){c.rec=[...(c.rec||[]),CAT_APORTE_LEO];mudou=true;}
+  if(mudou){setCats(c);reloadCats();addHist('Cadastrou categorias novas','Assinaturas / Aportes');}
+  ls.s('migracoes',{...ls.g('migracoes',{}),catsOutV1:true});
 }
 
 function aplicarListaOficialUmaVez(){
@@ -2706,14 +2766,27 @@ function gravarStone(linhas){
 // sistema assume Sicredi. As demais colunas do modelo §9 (dia operacional,
 // valor líquido, origem, qtd) são derivadas ou só valem para Stone/OFX — quem
 // digita à mão não preenche isso.
-const COLUNAS_MODELO=['Data','Hora','Tipo','Descrição','Valor','Categoria','Forma','Conta','Pago'];
+// O modelo traz TODAS as colunas que a importação lê. Valor Líquido e Chave
+// ficam em branco quando não se aplicam (boleto, dinheiro). Chave é a única
+// proteção contra importar a mesma linha duas vezes; Valor Líquido é de onde o
+// sistema tira a taxa de cartão (bruto − líquido).
+const COLUNAS_MODELO=['Data','Hora','Tipo','Descrição','Valor','Valor Líquido','Categoria','Forma','Bandeira','Conta','Chave','Pago'];
 
 function baixarModeloPlanilha(){
+  // Colunas: Data;Hora;Tipo;Descrição;Valor;Valor Líquido;Categoria;Forma;Bandeira;Conta;Chave;Pago
+  const FAT='Faturamento com Vendas de Produtos';
   const ex=[
-    ['05/09/2026','','Pagar','Distribuidora de bebida','1650,00','Custo dos Produtos','Boleto','Sicredi','Nao'],
-    ['06/09/2026','','Pagar','Conta de energia CEMIG','640,00','Luz (bar)','Boleto','Sicredi','Nao'],
-    ['06/09/2026','23:40','Receber','Venda avulsa em dinheiro','80,00','Faturamento com Vendas de Produtos','Dinheiro','Dinheiro','Sim'],
-    ['07/09/2026','','Transferência','Depósito do caixa no banco','800,00','','','',  'Sim']
+    // Venda de cartão: Valor = bruto, Valor Líquido = o que a Stone pagou. A diferença
+    // (3,51 e 0,37) vira lançamento de "Taxa de cartão" sozinho, um por dia + forma.
+    ['04/09/2026','21:19','Receber','Venda Stone','100,00','96,49',FAT,'Crédito','Visa','Sicredi','STONE-EXEMPLO-1','Sim'],
+    ['04/09/2026','22:05','Receber','Venda Stone','50,00','49,63',FAT,'PIX','','Sicredi','STONE-EXEMPLO-2','Sim'],
+    ['06/09/2026','23:40','Receber','Venda avulsa em dinheiro','80,00','',FAT,'Dinheiro','','Dinheiro','','Sim'],
+    ['05/09/2026','','Pagar','Distribuidora de bebida','1650,00','','Custo dos Produtos','Boleto','','Sicredi','','Nao'],
+    ['06/09/2026','','Pagar','Conta de energia CEMIG','640,00','','Luz (bar)','Boleto','','Sicredi','','Nao'],
+    // Mensalidade da maquininha: lançamento comum em "Taxa de cartão"
+    ['04/09/2026','','Pagar','Mensalidade Stone','79,90','','Taxa de cartão','PIX','','Sicredi','','Sim'],
+    // Transferência: Conta = de onde sai (em branco = Dinheiro, ou CDL); sempre entra no Sicredi
+    ['07/09/2026','','Transferência','Depósito do caixa no banco','800,00','','','','','','','Sim']
   ];
   // Linha de conferência: linhas;total Receber;total Pagar;total Transferência.
   // Fica no modelo pronta, com os totais dos próprios exemplos, pra servir de
@@ -2929,10 +3002,14 @@ function analisarPlanilha(textoOriginal){
   // Chave já usada no banco: STONE ID, FITID e Chave de planilhas anteriores.
   // É a ÚNICA coisa que define duplicata — nunca mais data+valor+descrição.
   const chavesExistentes=new Set();
+  const lancPorChave=new Map();   // chave → lançamento já gravado (pra dar baixa)
   existentes.forEach(l=>{
-    if(l.chave)chavesExistentes.add(String(l.chave));
-    if(l.stoneId)chavesExistentes.add(String(l.stoneId));
-    if(l.fitid)chavesExistentes.add(String(l.fitid));
+    [l.chave,l.stoneId,l.fitid].forEach(c=>{
+      if(!c)return;
+      const k=String(c);
+      chavesExistentes.add(k);
+      if(!lancPorChave.has(k))lancPorChave.set(k,l);
+    });
   });
   const pega=(l,c)=>idx[c]!==undefined?(l[idx[c]]??''):'';
 
@@ -2959,8 +3036,9 @@ function analisarPlanilha(textoOriginal){
     let valor=lerValorBR(bruto.valor);
     if(isNaN(valor)||valor===0)erros.push('valor inválido');
     // Líquido: se a coluna vier vazia (caso comum — boleto, dinheiro), líquido = bruto.
-    // O sistema não calcula taxa nenhuma (MDR do Stone, 3,5% do Cartão Alimentação) —
-    // bruto e líquido vêm prontos de quem processou o extrato.
+    // O sistema não calcula percentual nenhum (MDR do Stone, 3,5% do Cartão
+    // Alimentação): bruto e líquido vêm prontos do extrato. A taxa é a DIFERENÇA
+    // entre os dois, e vira lançamento na hora da importação (ver calcularTaxas).
     let valorLiquido=bruto.valorLiquido?lerValorBR(bruto.valorLiquido):valor;
     if(isNaN(valorLiquido))valorLiquido=valor;
     const qtd=bruto.qtd?parseInt(bruto.qtd,10):1;
@@ -3018,11 +3096,23 @@ function analisarPlanilha(textoOriginal){
     // item a item, é ignorado silenciosamente e contado ao final (§1 do Leo).
     const chave=bruto.chave?String(bruto.chave).trim():'';
     const dup=chave&&chavesExistentes.has(chave);
+    // Chave já existe, a linha nova vem Pago=Sim e o lançamento gravado ainda
+    // está em aberto: em vez de ignorar, dá baixa nele. Só o Pago muda — valor,
+    // categoria, conta e o resto ficam como estão.
+    let baixaId=null;
+    if(dup){
+      const ex=lancPorChave.get(chave);
+      if(ex&&!ex.pago&&pago&&tipo!=='transferencia'){
+        baixaId=ex.id;
+        if(Math.abs((ex.valor||0)-valor)>=0.01)
+          avisos.push('valor difere do lançamento existente ('+fBRL(ex.valor)+')');
+      }
+    }
 
     const dataVenda=(dataCal&&hm)?`${dataCal}T${String(hm.hora).padStart(2,'0')}:${String(hm.min).padStart(2,'0')}`:null;
     return{n:n+2,venc,dataVenda,conta,tipo,descricao,valor,valorLiquido,categoria,chave,
       forma:forma||'',bandeira:bruto.bandeira||'',origem,qtd:isNaN(qtd)||qtd<1?1:qtd,
-      pago,erros,avisos,dup};
+      pago,erros,avisos,dup,baixaId};
   }),resumo};
 }
 
@@ -3032,7 +3122,7 @@ function marcarRepetidasNoArquivo(linhas){
   const vistas=new Set();
   linhas.forEach(l=>{
     if(l.erros.length||!l.chave)return;
-    if(vistas.has(l.chave)){l.dup=true;l.avisos.push('chave repetida neste arquivo');}
+    if(vistas.has(l.chave)){l.dup=true;l.baixaId=null;l.avisos.push('chave repetida neste arquivo');}
     else vistas.add(l.chave);
   });
   return linhas;
@@ -3184,9 +3274,12 @@ function renderImportarPlanilha(){
         deriva da Forma (Cartão CDL Brumadinho/Cartão Alimentação → CDL, senão Sicredi).
         Tipo aceita um terceiro valor, <strong>Transferência</strong> — depósito/repasse virando dinheiro no banco: a linha vira
         duas (sai de Dinheiro ou CDL, entra no Sicredi), sem afetar Categoria/Conta, que são preenchidas sozinhas.
-        <strong>Bandeira</strong>, <strong>Valor Líquido</strong> e <strong>Qtd Transações</strong> também são aceitas, em branco
-        quando não fizer sentido (boleto, dinheiro) — é o que o Claude preenche ao processar um extrato de cartão. O sistema
-        não calcula taxa nenhuma: bruto e líquido vêm prontos.
+        <strong>Bandeira</strong> e <strong>Qtd Transações</strong> também são aceitas, em branco quando não fizer sentido.
+        <strong>Valor Líquido</strong> é o que a Stone (ou a CDL) realmente pagou. O sistema não aplica percentual: quando uma
+        venda (Receber) vem com líquido menor que o Valor, ele <strong>lança sozinho a taxa de cartão</strong> — a diferença,
+        somada por dia + forma + conta, como Pagar em "Taxa de cartão", já paga, na mesma conta da venda. Faturamento e ticket
+        médio continuam no bruto. <strong>Não mande a taxa como linha separada</strong>: ela seria lançada em dobro.
+        Mensalidade da maquininha é lançamento comum (Pagar, categoria Taxa de cartão).
         <strong>Origem não é mais coluna</strong> — o sistema deriva de Forma: Crédito/Débito/PIX → Stone, Cartão
         Alimentação → CDL (essas entram no ticket médio), Dinheiro/Boleto → Manual (fora do ticket médio).
         <strong>Categoria</strong> precisa ser uma das cadastradas na tela Categorias — fora dela a linha vira erro.
@@ -3195,6 +3288,8 @@ function renderImportarPlanilha(){
         a linha nunca é tratada como repetida, mesmo que pareça igual a outra (vendas de mesmo valor no mesmo
         dia são clientes diferentes, não repetição). Se a chave já existir no sistema, a linha é ignorada
         silenciosamente — não entra pra revisão, só é contada no resumo depois de importar.
+        <strong>Exceção — baixa:</strong> se a chave já existe, o lançamento gravado está em aberto e a linha nova vem
+        com <strong>Pago = Sim</strong>, a importação marca como pago (data de pagamento = Data da linha) e não mexe em mais nada.
         <strong>A importação é tudo ou nada:</strong> se sobrar qualquer erro no arquivo, nada é importado —
         corrija o CSV e reenvie.
         <strong>Conferência automática:</strong> se o arquivo tiver uma linha <code>#RESUMO;linhas;receber;pagar;transferência</code>
@@ -3257,6 +3352,45 @@ function renderImportarPlanilha(){
   });
 }
 
+// Taxa de cartão gerada pela própria importação (A1). Cada venda traz o Valor
+// Líquido real da Stone; a taxa é bruto − líquido, que varia por bandeira e por
+// antecipação, por isso não existe percentual fixo aqui. Uma linha Pagar por
+// DIA OPERACIONAL + FORMA + CONTA (setembro: ~63 linhas, não 1.000+). Só olha
+// as linhas NOVAS: venda que já existia (chave repetida) já teve a sua taxa.
+const CODIGO_FORMA={'Cartão de crédito':'CREDITO','Cartão de débito':'DEBITO','PIX':'PIX',
+  'Cartão CDL Brumadinho':'CDL','Dinheiro':'DINHEIRO','Boleto':'BOLETO'};
+const ROTULO_FORMA={'Cartão de crédito':'Crédito','Cartão de débito':'Débito',
+  'Cartão CDL Brumadinho':'Alimentação'};
+function chavesDoBanco(){
+  const set=new Set();
+  getLanc().forEach(l=>[l.chave,l.stoneId,l.fitid].forEach(c=>{if(c)set.add(String(c));}));
+  return set;
+}
+function calcularTaxas(novas){
+  const grupos={};
+  novas.forEach(l=>{
+    if(l.tipo!=='receber'||!l.venc)return;
+    const dif=Math.round(((l.valor||0)-(l.valorLiquido??l.valor))*100)/100;
+    if(!(dif>=0.01))return;                     // sem desconto, sem taxa
+    const k=[l.venc,l.forma||'',l.conta||'Sicredi',l.origem||''].join('|');
+    const g=grupos[k]=grupos[k]||{venc:l.venc,forma:l.forma||'',conta:l.conta||'Sicredi',origem:l.origem||'Manual',valor:0,n:0};
+    g.valor=Math.round((g.valor+dif)*100)/100;g.n++;
+  });
+  const usadas=chavesDoBanco();
+  return Object.values(grupos).sort((a,b)=>a.venc.localeCompare(b.venc)||a.forma.localeCompare(b.forma)).map(g=>{
+    const cod=CODIGO_FORMA[g.forma]||(chaveCol(g.forma).toUpperCase()||'SEMFORMA');
+    const base='TAXA_'+g.venc.replace(/-/g,'')+'_'+cod+'_'+chaveCol(g.conta).toUpperCase();
+    // Determinística: o mesmo arquivo gera a mesma chave. Só ganha sufixo se a
+    // chave já estiver no banco (segundo arquivo com vendas do mesmo dia).
+    let chave=base,i=2;
+    while(usadas.has(chave)){chave=base+'_'+(i++);}
+    usadas.add(chave);
+    const quem=g.origem==='CDL'?'CDL':(g.origem==='Stone'?'Stone':'cartão');
+    const rot=ROTULO_FORMA[g.forma]||g.forma||'sem forma';
+    return {...g,chave,descricao:'Taxa '+quem+' '+rot+' '+fmtData(g.venc)};
+  });
+}
+
 function mostrarPreviaImport(texto,nomeArquivo){
   // Lista de categorias sempre fresca na hora de validar
   garantirCategorias();reloadCats();
@@ -3266,8 +3400,11 @@ function mostrarPreviaImport(texto,nomeArquivo){
   linhasImport=marcarRepetidasNoArquivo(r.linhas);
   const comErro=linhasImport.filter(l=>l.erros.length);
   const validas=linhasImport.filter(l=>!l.erros.length);
-  const dups=validas.filter(l=>l.dup);
+  const baixas=validas.filter(l=>l.dup&&l.baixaId);
+  const dups=validas.filter(l=>l.dup&&!l.baixaId);
   const novas=validas.filter(l=>!l.dup);
+  const taxas=calcularTaxas(novas);
+  const totTaxas=Math.round(taxas.reduce((s,t)=>s+t.valor,0)*100)/100;
 
   // Categorias que apareceram no arquivo mas não existem na lista fechada,
   // agrupadas — pra mostrar de uma vez quais faltam, não uma por vez (item 7
@@ -3359,6 +3496,13 @@ function mostrarPreviaImport(texto,nomeArquivo){
         <div class="kcard"><div class="kval valor-pos num">${novas.length}</div><div class="klbl">Vão ser importadas</div></div>
         <div class="kcard"><div class="kval num" style="color:var(--text-3)">${dups.length}</div><div class="klbl">Já existem — ignoradas</div></div>
       </div>
+      ${baixas.length?`<div class="text-sm" style="color:var(--ok);margin-bottom:8px">
+        <strong>${baixas.length} baixa(s):</strong> a chave já existe e o lançamento estava em aberto — a linha marca como pago
+        (só o Pago muda).</div>`:''}
+      ${taxas.length?`<div class="text-sm" style="color:var(--amber);margin-bottom:12px">
+        <strong>Taxa de cartão automática:</strong> ${taxas.length} lançamento(s) Pagar, ${esc(fBRL(totTaxas))} no total
+        (bruto − líquido, um por dia + forma + conta). Não estão no arquivo, por isso não entram no #RESUMO.
+        Entram no mesmo lote: remover o lote remove as taxas junto.</div>`:''}
       ${linhasImport.length>MAX_PREVIA?`<div class="text-sm text-muted" style="margin-bottom:8px">
         Mostrando as ${MAX_PREVIA} primeiras de ${linhasImport.length} linhas — desenhar todas travava a tela.
         A conferência e a importação usam o arquivo inteiro.</div>`:''}
@@ -3366,7 +3510,7 @@ function mostrarPreviaImport(texto,nomeArquivo){
         <table>
           <thead><tr><th>Linha</th><th>Data</th><th>Tipo</th><th>Descrição</th><th>Categoria</th><th>Conta</th><th style="text-align:right">Valor</th><th>Situação</th></tr></thead>
           <tbody>${linhasImport.slice(0,MAX_PREVIA).map(l=>`
-            <tr${l.dup?' style="opacity:.5"':''}>
+            <tr${(l.dup&&!l.baixaId)?' style="opacity:.5"':''}>
               <td class="num">${l.n}</td>
               <td class="num">${l.venc?esc(fmtData(l.venc)):'—'}</td>
               <td>${l.tipo==='transferencia'?'<span class="bdg" style="background:var(--amber-bg,rgba(245,166,35,.15));color:var(--amber)">Transferência</span>'
@@ -3377,6 +3521,7 @@ function mostrarPreviaImport(texto,nomeArquivo){
               <td class="num fw6 ${l.tipo==='receber'?'valor-rec':'valor-pag'}" style="text-align:right">${isNaN(l.valor)?'—':esc(fBRL(l.valor))}</td>
               <td class="text-sm">${l.erros.length
                 ?`<span style="color:var(--erro)">${esc(l.erros.join(', '))}</span>`
+                :l.baixaId?`<span style="color:var(--ok)">dá baixa no existente</span>${l.avisos.length?` <span style="color:var(--amber)">· ${esc(l.avisos.join(', '))}</span>`:''}`
                 :l.dup?`<span style="color:var(--text-3)">já existe — ignorada</span>`
                 :(l.avisos.length?`<span style="color:var(--amber)">${esc(l.avisos.join(', '))}</span>`:'<span style="color:var(--ok)">ok</span>')}</td>
             </tr>`).join('')}</tbody>
@@ -3405,8 +3550,11 @@ function mostrarPreviaImport(texto,nomeArquivo){
   $('btn-importar').addEventListener('click',()=>{
     if(comErro.length){toast('Corrija os erros antes de importar.',true);return;}
     if(!conferido){toast('Confira o resumo antes de importar.',true);return;}
-    if(!novas.length){toast('Nada novo pra importar — tudo já existe no sistema.',true);return;}
-    if(!confirm(`Importar ${novas.length} lançamento(s)?\n\n${dups.length?dups.length+' já existentes serão ignorados. ':''}Nada do que já está no sistema será alterado.`))return;
+    if(!novas.length&&!baixas.length){toast('Nada novo pra importar — tudo já existe no sistema.',true);return;}
+    if(!confirm(`Importar ${novas.length} lançamento(s)${taxas.length?' + '+taxas.length+' de taxa de cartão ('+fBRL(totTaxas)+')':''}?\n\n`+
+      (baixas.length?baixas.length+' baixa(s) em lançamentos já existentes (só o Pago muda). ':'')+
+      (dups.length?dups.length+' já existentes serão ignorados. ':'')+
+      'Nada além disso do que já está no sistema será alterado.'))return;
     const lancs=getLanc();
     const idsGerados=[];
     novas.forEach(l=>{
@@ -3437,12 +3585,35 @@ function mostrarPreviaImport(texto,nomeArquivo){
       });
       idsGerados.push(id);
     });
+    // Taxa de cartão: uma linha Pagar por dia + forma + conta, já paga, mesma
+    // conta da venda. A Forma é a da venda, mas é Pagar: não conta como venda
+    // no ticket médio nem no "Recebido por forma".
+    const agoraTx=agora();
+    taxas.forEach(t=>{
+      const id=uid('l');
+      lancs.push({id,tipo:'pagar',valor:t.valor,valorBruto:t.valor,valorLiquido:t.valor,
+        descricao:t.descricao,categoria:CAT_TAXA,forma:t.forma,conta:t.conta,bandeira:'',
+        vencimento:t.venc,diaOperacional:t.venc,dataVenda:null,dataRecebimento:t.venc,
+        dataPagamento:t.venc,pago:true,totalParcelas:1,parcelaAtual:1,grupoId:null,
+        qtdTransacoes:1,cliente:'',showId:null,foraDaAnalise:false,chave:t.chave,
+        obs:'Gerada pela importação: '+t.n+' venda(s), bruto − líquido',origem:t.origem,taxaAuto:true,
+        criadoEm:agoraTx,atualizadoEm:agoraTx});
+      idsGerados.push(id);
+    });
+    // Baixas: só marca como pago, com a data da linha
+    const baixaIds=[];
+    baixas.forEach(l=>{
+      const e=lancs.find(x=>x.id===l.baixaId);
+      if(e&&!e.pago){e.pago=true;e.dataPagamento=l.venc;e.atualizadoEm=agoraTx;baixaIds.push(e.id);}
+    });
     setLanc(lancs);
     registrarImportacao({arquivo:nomeArquivo||'planilha.csv',linhas:totLinhas,
-      criados:idsGerados.length,ignorados:dups.length,lancIds:idsGerados,
-      totalReceber:totRec,totalPagar:totPag,totalTransferencia:totTransf});
-    addHist('Importou planilha',`${novas.length} linha(s) → ${idsGerados.length} lançamento(s), ${dups.length} ignorado(s)`);
-    const base=`${idsGerados.length} lançamento(s) importados.`+(dups.length?` ${dups.length} ignorado(s) por já existir.`:'');
+      criados:idsGerados.length,ignorados:dups.length,lancIds:idsGerados,baixaIds,
+      totalReceber:totRec,totalPagar:totPag,totalTransferencia:totTransf,taxasGeradas:taxas.length});
+    addHist('Importou planilha',`${novas.length} linha(s) → ${idsGerados.length} lançamento(s) (${taxas.length} de taxa), ${baixaIds.length} baixa(s), ${dups.length} ignorado(s)`);
+    const base=`${idsGerados.length} lançamento(s) importados`+(taxas.length?` (${taxas.length} de taxa de cartão)`:'')+'.'+
+      (baixaIds.length?` ${baixaIds.length} baixa(s).`:'')+
+      (dups.length?` ${dups.length} ignorado(s) por já existir.`:'');
     // Pagamento de cachê que chegou agora pode encostar num show previsto —
     // mas quem confirma é o Leo, um por um (ver propostasDeVinculo).
     const props=propostasDeVinculo(idsGerados);
